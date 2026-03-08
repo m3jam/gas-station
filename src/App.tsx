@@ -521,8 +521,8 @@ export default function App() {
               </button>
               <div>
                 <h2 className="text-xl lg:text-2xl font-black text-slate-800">
-                  {activeTab === 'dashboard' && 'لوحة التحكم'}
-                  {activeTab === 'readings' && 'إدخال عدادات اليوم'}
+                  {activeTab === 'dashboard' && ' الصفحة الرئيسية '}
+                  {activeTab === 'readings' && 'إدخال مبيعات اليوم'}
                   {activeTab === 'expenses' && 'إدارة المصاريف'}
                   {activeTab === 'setup' && 'المنتجات والمضخات'}
                   {activeTab === 'inventory' && 'إدارة الواردات والخزين'}
