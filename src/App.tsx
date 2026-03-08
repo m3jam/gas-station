@@ -29,7 +29,8 @@ import {
   Clock,
   AlertTriangle,
   Power,
-  Gauge
+  Gauge,
+  ArrowRight
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -180,6 +181,11 @@ export default function App() {
   const [inventoryData, setInventoryData] = useState<any[]>([]);
   const [inventoryDateFilter, setInventoryDateFilter] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [stationData, setStationData] = useState<any>(null);
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSelectedProductId(null);
+  }, [activeTab]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -419,14 +425,14 @@ export default function App() {
             <>
               <SidebarItem 
                 icon={LayoutDashboard} 
-                label="الصفحة الرئيسية" 
+                label="الصفحة الرئيسية " 
                 active={activeTab === 'dashboard'} 
                 disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
                 onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('dashboard'); setIsSidebarOpen(false); } }} 
               />
               <SidebarItem 
                 icon={Gauge} 
-                label="إدخال المبيعات" 
+                label="إدخال العدادات" 
                 active={activeTab === 'readings'} 
                 disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
                 onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('readings'); setIsSidebarOpen(false); } }} 
@@ -730,98 +736,123 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
-              <div className="grid grid-cols-1 gap-6">
-                {products.map(product => (
-                  <div key={product.id}>
-                    <Card title={product.name}>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {pumps.filter(p => p.product_id === product.id).map(pump => (
-                          <div key={pump.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                            <div className="flex items-center gap-2 mb-4">
-                              <Fuel className="w-4 h-4 text-indigo-500" />
-                              <span className="font-bold text-slate-700">{pump.name}</span>
-                            </div>
-                            <form onSubmit={async (e: any) => {
-                              e.preventDefault();
-                              const formData = new FormData(e.target);
-                              try {
-                                await api.saveReading({
-                                  pump_id: pump.id,
-                                  reading_date: date,
-                                  opening_meter_1: parseFloat(formData.get('opening_1') as string),
-                                  closing_meter_1: parseFloat(formData.get('closing_1') as string),
-                                  opening_meter_2: parseFloat(formData.get('opening_2') as string),
-                                  closing_meter_2: parseFloat(formData.get('closing_2') as string),
-                                });
-                                alert('تم حفظ القراءات بنجاح');
-                                loadDashboardData();
-                              } catch (err) {
-                                alert('خطأ في حفظ القراءات');
-                              }
-                            }} className="space-y-4">
-                              <div className="space-y-2 border-b border-slate-200 pb-3">
-                                <p className="text-[10px] font-black text-indigo-600 uppercase">العداد الأول (A)</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">افتتاحي</label>
-                                    <input 
-                                      name="opening_1" 
-                                      type="number" 
-                                      step="0.01"
-                                      defaultValue={pump.last_meter_reading_1}
-                                      required 
-                                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">ختامي</label>
-                                    <input 
-                                      name="closing_1" 
-                                      type="number" 
-                                      step="0.01"
-                                      required 
-                                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="space-y-2">
-                                <p className="text-[10px] font-black text-indigo-600 uppercase">العداد الثاني (B)</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">افتتاحي</label>
-                                    <input 
-                                      name="opening_2" 
-                                      type="number" 
-                                      step="0.01"
-                                      defaultValue={pump.last_meter_reading_2}
-                                      required 
-                                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 mb-1">ختامي</label>
-                                    <input 
-                                      name="closing_2" 
-                                      type="number" 
-                                      step="0.01"
-                                      required 
-                                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              <button className="w-full bg-indigo-600 text-white p-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition-all">
-                                حفظ القراءات
-                              </button>
-                            </form>
-                          </div>
-                        ))}
+              {!selectedProductId ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {products.map(product => (
+                    <motion.div
+                      key={product.id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setSelectedProductId(product.id)}
+                      className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 cursor-pointer hover:shadow-xl hover:border-indigo-200 transition-all group text-center"
+                    >
+                      <div className="bg-indigo-50 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                        <Fuel className="w-8 h-8" />
                       </div>
-                    </Card>
+                      <h3 className="text-xl font-black text-slate-800">{product.name}</h3>
+                      <p className="text-slate-500 font-bold mt-2">اضغط لإدخال قراءات المضخات</p>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <button 
+                      onClick={() => setSelectedProductId(null)}
+                      className="bg-white p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all flex items-center gap-2 font-bold"
+                    >
+                      <ArrowRight className="w-5 h-5" />
+                      رجوع للمنتجات
+                    </button>
+                    <h2 className="text-2xl font-black text-slate-800">
+                      مضخات {products.find(p => p.id === selectedProductId)?.name}
+                    </h2>
                   </div>
-                ))}
-              </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {pumps.filter(p => p.product_id === selectedProductId).map(pump => (
+                      <div key={pump.id}>
+                        <Card title={pump.name}>
+                          <form onSubmit={async (e: any) => {
+                          e.preventDefault();
+                          const formData = new FormData(e.target);
+                          try {
+                            await api.saveReading({
+                              pump_id: pump.id,
+                              reading_date: date,
+                              opening_meter_1: parseFloat(formData.get('opening_1') as string),
+                              closing_meter_1: parseFloat(formData.get('closing_1') as string),
+                              opening_meter_2: parseFloat(formData.get('opening_2') as string),
+                              closing_meter_2: parseFloat(formData.get('closing_2') as string),
+                            });
+                            alert('تم حفظ القراءات بنجاح');
+                            loadDashboardData();
+                          } catch (err) {
+                            alert('خطأ في حفظ القراءات');
+                          }
+                        }} className="space-y-4">
+                          <div className="space-y-2 border-b border-slate-200 pb-3">
+                            <p className="text-[10px] font-black text-indigo-600 uppercase">العداد الأول (A)</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">افتتاحي</label>
+                                <input 
+                                  name="opening_1" 
+                                  type="number" 
+                                  step="0.01"
+                                  defaultValue={pump.last_meter_reading_1}
+                                  required 
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">ختامي</label>
+                                <input 
+                                  name="closing_1" 
+                                  type="number" 
+                                  step="0.01"
+                                  required 
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-black text-indigo-600 uppercase">العداد الثاني (B)</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">افتتاحي</label>
+                                <input 
+                                  name="opening_2" 
+                                  type="number" 
+                                  step="0.01"
+                                  defaultValue={pump.last_meter_reading_2}
+                                  required 
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">ختامي</label>
+                                <input 
+                                  name="closing_2" 
+                                  type="number" 
+                                  step="0.01"
+                                  required 
+                                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          <button className="w-full bg-indigo-600 text-white p-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition-all">
+                            حفظ القراءات
+                          </button>
+                        </form>
+                      </Card>
+                    </div>
+                  ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
