@@ -419,14 +419,14 @@ export default function App() {
             <>
               <SidebarItem 
                 icon={LayoutDashboard} 
-                label="لوحة التحكم" 
+                label="الصفحة الرئيسية" 
                 active={activeTab === 'dashboard'} 
                 disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
                 onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('dashboard'); setIsSidebarOpen(false); } }} 
               />
               <SidebarItem 
                 icon={Gauge} 
-                label="إدخال العدادات" 
+                label="إدخال المبيعات" 
                 active={activeTab === 'readings'} 
                 disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
                 onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('readings'); setIsSidebarOpen(false); } }} 
