@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import { dirname } from 'path';
 import Stripe from "stripe";
 
 // Handle BigInt serialization for JSON
@@ -15,7 +16,7 @@ import Stripe from "stripe";
 };
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = dirname(__filename);
 
 const usePostgres = !!process.env.DATABASE_URL;
 const pool = usePostgres ? new Pool({
