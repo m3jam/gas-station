@@ -1486,7 +1486,7 @@ export default function App() {
                               </td>
                               <td className="py-4">
                                 <div className="flex items-center gap-2">
-                                  {station.subscription_status === 'Pending' ? (
+                                  {(isPending || isNew) ? (
                                     <button 
                                       onClick={async () => {
                                         const months = window.prompt('تأكيد استلام المبلغ وتفعيل الاشتراك لعدد أشهر:', '1');

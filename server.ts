@@ -95,8 +95,8 @@ const initDb = async () => {
       phone TEXT,
       subscription_plan TEXT DEFAULT 'Basic',
       subscription_expires_at TIMESTAMP,
-      is_active INTEGER DEFAULT 1,
-      subscription_status TEXT DEFAULT 'Active',
+      is_active INTEGER DEFAULT 0,
+      subscription_status TEXT DEFAULT 'Inactive',
       owner_username TEXT,
       owner_password_plain TEXT,
       stripe_customer_id TEXT,
@@ -318,8 +318,8 @@ app.post("/api/stations", authenticateToken, async (req: any, res) => {
     }
 
     const stationRes = await client.query(
-      "INSERT INTO stations (name, address, phone, subscription_plan, subscription_expires_at, is_active, subscription_status, owner_username, owner_password_plain) VALUES ($1, $2, $3, $4, $5, 1, 'Active', $6, $7) RETURNING id",
-      [name, address, phone, subscription_plan || 'Basic', expiryDate.toISOString(), owner_username, owner_password]
+      "INSERT INTO stations (name, address, phone, subscription_plan, subscription_expires_at, is_active, subscription_status, owner_username, owner_password_plain) VALUES ($1, $2, $3, $4, $5, 0, 'Inactive', $6, $7) RETURNING id",
+      [name, address, phone, subscription_plan || 'Basic', null, owner_username, owner_password]
     );
     
     const stationId = stationRes.rows[0].id;
