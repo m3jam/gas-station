@@ -3,12 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build",
-    "preview": "vite preview",
-    "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+  "dev": "tsx server.ts",
+  "build": "vite build && tsc server.ts --outDir dist --esModuleInterop --module commonjs --target es2020 --moduleResolution node --skipLibCheck",
+  "start": "node dist/server.js",
+  "preview": "vite preview",
+  "clean": "rm -rf dist",
+  "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
