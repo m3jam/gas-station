@@ -121,6 +121,12 @@ const api = {
   saveInventory: (data: any) => api.fetch('/inventory-transactions', { method: 'POST', body: JSON.stringify(data) }),
   deleteInventory: (id: number) => api.fetch(`/inventory-transactions/${id}`, { method: 'DELETE' }),
   recalculateStats: (date: string) => api.fetch('/dashboard/recalculate', { method: 'POST', body: JSON.stringify({ date }) }),
+  getWithdrawals: (date: string) => api.fetch(`/withdrawals?date=${date}`),
+  saveWithdrawal: (data: any) => api.fetch('/withdrawals', { method: 'POST', body: JSON.stringify(data) }),
+  deleteWithdrawal: (id: number) => api.fetch(`/withdrawals/${id}`, { method: 'DELETE' }),
+  getCommercialSales: (date: string) => api.fetch(`/commercial-sales?date=${date}`),
+  saveCommercialSale: (data: any) => api.fetch('/commercial-sales', { method: 'POST', body: JSON.stringify(data) }),
+  deleteCommercialSale: (id: number) => api.fetch(`/commercial-sales/${id}`, { method: 'DELETE' }),
 };
 
 // --- Components ---
@@ -180,8 +186,12 @@ export default function App() {
   const [expenseDateFilter, setExpenseDateFilter] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [inventoryData, setInventoryData] = useState<any[]>([]);
   const [inventoryDateFilter, setInventoryDateFilter] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [readingsDate, setReadingsDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [stationData, setStationData] = useState<any>(null);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [withdrawalsData, setWithdrawalsData] = useState<any[]>([]);
+  const [commercialSalesData, setCommercialSalesData] = useState<any[]>([]);
+  const [withdrawalsCommercialDate, setWithdrawalsCommercialDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 
   useEffect(() => {
     setSelectedProductId(null);
@@ -308,6 +318,19 @@ export default function App() {
     }
   };
 
+  const loadWithdrawalsCommercial = async () => {
+    try {
+      const [wData, cData] = await Promise.all([
+        api.getWithdrawals(withdrawalsCommercialDate),
+        api.getCommercialSales(withdrawalsCommercialDate)
+      ]);
+      setWithdrawalsData(wData);
+      setCommercialSalesData(cData);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     if (user && activeTab === 'reports') {
       loadReports();
@@ -318,7 +341,10 @@ export default function App() {
     if (user && activeTab === 'inventory') {
       loadInventory();
     }
-  }, [activeTab, reportType, reportDate, expenseDateFilter, inventoryDateFilter]);
+    if (user && activeTab === 'withdrawals_commercial') {
+      loadWithdrawalsCommercial();
+    }
+  }, [activeTab, reportType, reportDate, expenseDateFilter, inventoryDateFilter, withdrawalsCommercialDate]);
 
   const handleLogin = async (e: any) => {
     e.preventDefault();
@@ -432,10 +458,17 @@ export default function App() {
               />
               <SidebarItem 
                 icon={Gauge} 
-                label="إدخال المبيعات" 
+                label="إدخال العدادات" 
                 active={activeTab === 'readings'} 
                 disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
                 onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('readings'); setIsSidebarOpen(false); } }} 
+              />
+              <SidebarItem 
+                icon={PlusCircle} 
+                label="السحب والتجاري" 
+                active={activeTab === 'withdrawals_commercial'} 
+                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('withdrawals_commercial'); setIsSidebarOpen(false); } }} 
               />
               <SidebarItem 
                 icon={Wallet} 
@@ -521,8 +554,9 @@ export default function App() {
               </button>
               <div>
                 <h2 className="text-xl lg:text-2xl font-black text-slate-800">
-                  {activeTab === 'dashboard' && ' الصفحة الرئيسية '}
-                  {activeTab === 'readings' && 'إدخال مبيعات اليوم'}
+                  {activeTab === 'dashboard' && 'لوحة التحكم'}
+                  {activeTab === 'readings' && 'إدخال عدادات اليوم'}
+                  {activeTab === 'withdrawals_commercial' && 'السحب والتجاري'}
                   {activeTab === 'expenses' && 'إدارة المصاريف'}
                   {activeTab === 'setup' && 'المنتجات والمضخات'}
                   {activeTab === 'inventory' && 'إدارة الواردات والخزين'}
@@ -539,15 +573,17 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-3 self-end md:self-auto">
-            <div className="relative">
-              <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-              <input 
-                type="date" 
-                value={date} 
-                onChange={(e) => setDate(e.target.value)}
-                className="bg-white border border-slate-200 rounded-xl p-2 pr-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
+            {activeTab === 'dashboard' && (
+              <div className="relative">
+                <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                <input 
+                  type="date" 
+                  value={date} 
+                  onChange={(e) => setDate(e.target.value)}
+                  className="bg-white border border-slate-200 rounded-xl p-2 pr-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            )}
           </div>
         </header>
 
@@ -610,13 +646,13 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard 
                   title="إجمالي المبيعات" 
-                  value={`${stats.products.reduce((acc: any, p: any) => acc + (p.total_sales || 0), 0).toLocaleString()} د.ع`}
+                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_sales || 0), 0) - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity * (stats.products.find((p: any) => p.name.includes('كاز'))?.sale_price || 0)), 0) || 0)).toLocaleString()} د.ع`}
                   icon={TrendingUp}
                   color="bg-indigo-500"
                 />
                 <StatCard 
                   title="صافي الربح" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - stats.totalExpenses).toLocaleString()} د.ع`}
+                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - stats.totalExpenses - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity * (stats.products.find((p: any) => p.name.includes('كاز'))?.sale_price || 0)), 0) || 0)).toLocaleString()} د.ع`}
                   icon={TrendingUp}
                   color="bg-emerald-500"
                 />
@@ -725,6 +761,255 @@ export default function App() {
                   </div>
                 </Card>
               </div>
+
+              {/* New Widgets */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <Card title="ملخص التجاري">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center p-4 bg-slate-50 rounded-xl">
+                      <span className="text-slate-600 font-bold">إجمالي الكمية المباعة</span>
+                      <span className="text-indigo-600 font-black text-lg">{(stats.commercialSummary?.totalLiters || 0).toLocaleString()} لتر</span>
+                    </div>
+                    <div className="flex justify-between items-center p-4 bg-emerald-50 rounded-xl">
+                      <span className="text-emerald-700 font-bold">إجمالي فرق السعر (الربح)</span>
+                      <span className="text-emerald-600 font-black text-lg">{(stats.commercialSummary?.totalDiff || 0).toLocaleString()} د.ع</span>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card title="سجل السحوبات">
+                  <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
+                    {stats.withdrawals?.map((w: any, idx: number) => (
+                      <div key={idx} className="flex justify-between items-center p-3 border-b border-slate-50 last:border-0">
+                        <div className="flex flex-col">
+                          <span className="text-slate-800 font-bold">{w.quantity} لتر</span>
+                          <span className="text-xs text-slate-400">{w.reason}</span>
+                        </div>
+                        <span className="text-xs text-slate-400">{format(new Date(w.withdrawal_date), 'HH:mm')}</span>
+                      </div>
+                    ))}
+                    {(!stats.withdrawals || stats.withdrawals.length === 0) && (
+                      <p className="text-center text-slate-400 py-4">لا توجد سحوبات مسجلة</p>
+                    )}
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center">
+                    <span className="text-slate-600 font-bold">إجمالي السحوبات</span>
+                    <span className="text-rose-600 font-black">{(stats.withdrawals?.reduce((acc: any, w: any) => acc + w.quantity, 0) || 0).toLocaleString()} لتر</span>
+                  </div>
+                </Card>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'withdrawals_commercial' && user.role !== 'SuperAdmin' && (
+            <motion.div 
+              key="withdrawals_commercial"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="space-y-8"
+            >
+              {/* Date Picker for this page */}
+              <div className="flex justify-end">
+                <div className="relative">
+                  <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
+                  <input 
+                    type="date" 
+                    value={withdrawalsCommercialDate} 
+                    onChange={(e) => setWithdrawalsCommercialDate(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-xl p-2 pr-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Withdrawals Section */}
+                <div className="space-y-6">
+                  <Card title="تسجيل سحب (كاز السيارات)">
+                    <form onSubmit={async (e: any) => {
+                      e.preventDefault();
+                      const formData = new FormData(e.target);
+                      try {
+                        await api.saveWithdrawal({
+                          withdrawal_date: withdrawalsCommercialDate,
+                          quantity: parseFloat(formData.get('quantity') as string),
+                          reason: formData.get('reason') as string
+                        });
+                        alert('تم حفظ السحب بنجاح');
+                        e.target.reset();
+                        loadWithdrawalsCommercial();
+                        loadDashboardData();
+                      } catch (err) {
+                        alert('خطأ في حفظ السحب');
+                      }
+                    }} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">الكمية (لتر)</label>
+                        <input 
+                          name="quantity"
+                          type="number" 
+                          step="0.01"
+                          required
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">السبب</label>
+                        <textarea 
+                          name="reason"
+                          required
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                          placeholder="اكتب سبب السحب هنا..."
+                        />
+                      </div>
+                      <button className="w-full bg-indigo-600 text-white p-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
+                        حفظ السحب
+                      </button>
+                    </form>
+                  </Card>
+
+                  <Card title="سجل السحوبات">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-right">
+                        <thead>
+                          <tr className="border-b border-slate-100">
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">الكمية</th>
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">السبب</th>
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">الإجراء</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {withdrawalsData.map((w) => (
+                            <tr key={w.id} className="border-b border-slate-50 last:border-0">
+                              <td className="py-3 px-4 font-bold text-slate-700">{w.quantity} لتر</td>
+                              <td className="py-3 px-4 text-slate-500 text-sm">{w.reason}</td>
+                              <td className="py-3 px-4">
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm('هل أنت متأكد من حذف هذا السحب؟')) {
+                                      try {
+                                        await api.deleteWithdrawal(w.id);
+                                        loadWithdrawalsCommercial();
+                                        loadDashboardData();
+                                      } catch (err) {
+                                        alert('خطأ في حذف السحب');
+                                      }
+                                    }
+                                  }}
+                                  className="text-rose-500 hover:text-rose-700 transition-all"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {withdrawalsData.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">لا توجد سحوبات مسجلة لهذا التاريخ</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+
+                {/* Commercial Sales Section */}
+                <div className="space-y-6">
+                  <Card title="تسجيل مبيعات تجاري">
+                    <form onSubmit={async (e: any) => {
+                      e.preventDefault();
+                      const formData = new FormData(e.target);
+                      try {
+                        await api.saveCommercialSale({
+                          sale_date: withdrawalsCommercialDate,
+                          quantity: parseFloat(formData.get('quantity') as string),
+                          commercial_price: parseFloat(formData.get('commercial_price') as string)
+                        });
+                        alert('تم حفظ المبيعات بنجاح');
+                        e.target.reset();
+                        loadWithdrawalsCommercial();
+                        loadDashboardData();
+                      } catch (err) {
+                        alert('خطأ في حفظ المبيعات');
+                      }
+                    }} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">الكمية (لتر)</label>
+                        <input 
+                          name="quantity"
+                          type="number" 
+                          step="0.01"
+                          required
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">سعر البيع التجاري (للتر الواحد)</label>
+                        <input 
+                          name="commercial_price"
+                          type="number" 
+                          required
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                          placeholder="0"
+                        />
+                      </div>
+                      <button className="w-full bg-emerald-600 text-white p-3 rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100">
+                        حفظ المبيعات
+                      </button>
+                    </form>
+                  </Card>
+
+                  <Card title="سجل المبيعات التجاري">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-right">
+                        <thead>
+                          <tr className="border-b border-slate-100">
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">الكمية</th>
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">السعر</th>
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">الفرق</th>
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">الإجراء</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {commercialSalesData.map((s) => (
+                            <tr key={s.id} className="border-b border-slate-50 last:border-0">
+                              <td className="py-3 px-4 font-bold text-slate-700">{s.quantity} لتر</td>
+                              <td className="py-3 px-4 text-slate-700 font-bold">{s.commercial_price.toLocaleString()} د.ع</td>
+                              <td className="py-3 px-4 text-emerald-600 font-bold">{s.difference.toLocaleString()} د.ع</td>
+                              <td className="py-3 px-4">
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm('هل أنت متأكد من حذف هذا السجل؟')) {
+                                      try {
+                                        await api.deleteCommercialSale(s.id);
+                                        loadWithdrawalsCommercial();
+                                        loadDashboardData();
+                                      } catch (err) {
+                                        alert('خطأ في حذف السجل');
+                                      }
+                                    }
+                                  }}
+                                  className="text-rose-500 hover:text-rose-700 transition-all"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {commercialSalesData.length === 0 && (
+                            <tr>
+                              <td colSpan={4} className="py-8 text-center text-slate-400 font-medium">لا توجد مبيعات تجارية مسجلة لهذا التاريخ</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -736,6 +1021,17 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
+              <div className="flex justify-end">
+                <div className="relative">
+                  <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
+                  <input 
+                    type="date" 
+                    value={readingsDate} 
+                    onChange={(e) => setReadingsDate(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-xl p-2 pr-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
               {!selectedProductId ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   {products.map(product => (
@@ -779,7 +1075,7 @@ export default function App() {
                           try {
                             await api.saveReading({
                               pump_id: pump.id,
-                              reading_date: date,
+                              reading_date: readingsDate,
                               opening_meter_1: parseFloat(formData.get('opening_1') as string),
                               closing_meter_1: parseFloat(formData.get('closing_1') as string),
                               opening_meter_2: parseFloat(formData.get('opening_2') as string),
@@ -862,15 +1158,26 @@ export default function App() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="max-w-2xl mx-auto"
+              className="max-w-2xl mx-auto space-y-6"
             >
+              <div className="flex justify-end">
+                <div className="relative">
+                  <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
+                  <input 
+                    type="date" 
+                    value={expenseDateFilter} 
+                    onChange={(e) => setExpenseDateFilter(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-xl p-2 pr-10 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
               <Card title="تسجيل مصروف جديد">
                 <form onSubmit={async (e: any) => {
                   e.preventDefault();
                   const formData = new FormData(e.target);
                   try {
                     await api.saveExpense({
-                      expense_date: date,
+                      expense_date: expenseDateFilter,
                       category: formData.get('category'),
                       amount: parseFloat(formData.get('amount') as string),
                       notes: formData.get('notes'),

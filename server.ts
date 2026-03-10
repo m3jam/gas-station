@@ -170,6 +170,26 @@ const initDb = async () => {
       unit_price DOUBLE PRECISION,
       supplier_name TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS withdrawals (
+      id SERIAL PRIMARY KEY,
+      station_id INTEGER NOT NULL REFERENCES stations(id),
+      withdrawal_date DATE NOT NULL,
+      quantity DOUBLE PRECISION NOT NULL,
+      reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS commercial_sales (
+      id SERIAL PRIMARY KEY,
+      station_id INTEGER NOT NULL REFERENCES stations(id),
+      sale_date DATE NOT NULL,
+      quantity DOUBLE PRECISION NOT NULL,
+      commercial_price DOUBLE PRECISION NOT NULL,
+      default_price DOUBLE PRECISION NOT NULL,
+      difference DOUBLE PRECISION NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
   `);
   await ensureAdmin();
 };
@@ -662,9 +682,20 @@ app.get("/api/dashboard/stats", authenticateToken, checkSubscription, async (req
   const totalExpensesRes = await db.query("SELECT SUM(amount) as total FROM expenses WHERE station_id = $1 AND expense_date = $2",
     [req.user.station_id, date]);
 
+  const withdrawalsRes = await db.query("SELECT * FROM withdrawals WHERE station_id = $1 AND withdrawal_date = $2",
+    [req.user.station_id, date]);
+  
+  const commercialSalesRes = await db.query("SELECT SUM(quantity) as total_liters, SUM(difference) as total_diff FROM commercial_sales WHERE station_id = $1 AND sale_date = $2",
+    [req.user.station_id, date]);
+
   res.json({
     products: productStatsRes.rows,
-    totalExpenses: totalExpensesRes.rows[0]?.total || 0
+    totalExpenses: totalExpensesRes.rows[0]?.total || 0,
+    withdrawals: withdrawalsRes.rows,
+    commercialSummary: {
+      totalLiters: commercialSalesRes.rows[0]?.total_liters || 0,
+      totalDiff: commercialSalesRes.rows[0]?.total_diff || 0
+    }
   });
 });
 
@@ -735,6 +766,96 @@ app.post("/api/expenses", authenticateToken, checkSubscription, async (req: any,
   const { expense_date, category, amount, notes } = req.body;
   await db.query("INSERT INTO expenses (station_id, expense_date, category, amount, notes) VALUES ($1, $2, $3, $4, $5)",
     [req.user.station_id, expense_date, category, amount, notes]);
+  res.json({ success: true });
+});
+
+// Withdrawals
+app.get("/api/withdrawals", authenticateToken, checkSubscription, async (req: any, res) => {
+  const { date } = req.query;
+  const result = await db.query("SELECT * FROM withdrawals WHERE station_id = $1 AND withdrawal_date = $2",
+    [req.user.station_id, date]);
+  res.json(result.rows);
+});
+
+app.post("/api/withdrawals", authenticateToken, checkSubscription, async (req: any, res) => {
+  const { withdrawal_date, quantity, reason } = req.body;
+  
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Insert withdrawal
+    await client.query("INSERT INTO withdrawals (station_id, withdrawal_date, quantity, reason) VALUES ($1, $2, $3, $4)",
+      [req.user.station_id, withdrawal_date, quantity, reason]);
+    
+    // Deduct from "كاز السيارات" stock
+    // We search for a product named 'كاز السيارات' or 'كاز'
+    const productRes = await client.query("SELECT id FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", [req.user.station_id]);
+    if (productRes.rows[0]) {
+      await client.query("UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2", [quantity, productRes.rows[0].id]);
+      
+      // Record inventory transaction
+      await client.query("INSERT INTO inventory_transactions (station_id, product_id, transaction_date, type, quantity) VALUES ($1, $2, $3, 'OUT', $4)",
+        [req.user.station_id, productRes.rows[0].id, withdrawal_date, quantity]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error("Withdrawal error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/withdrawals/:id", authenticateToken, checkSubscription, async (req: any, res) => {
+  const { id } = req.params;
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const resW = await client.query("SELECT * FROM withdrawals WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
+    const withdrawal = resW.rows[0];
+    if (withdrawal) {
+      // Revert stock
+      const productRes = await client.query("SELECT id FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", [req.user.station_id]);
+      if (productRes.rows[0]) {
+        await client.query("UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2", [withdrawal.quantity, productRes.rows[0].id]);
+      }
+      await client.query("DELETE FROM withdrawals WHERE id = $1", [id]);
+    }
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
+// Commercial Sales
+app.get("/api/commercial-sales", authenticateToken, checkSubscription, async (req: any, res) => {
+  const { date } = req.query;
+  const result = await db.query("SELECT * FROM commercial_sales WHERE station_id = $1 AND sale_date = $2",
+    [req.user.station_id, date]);
+  res.json(result.rows);
+});
+
+app.post("/api/commercial-sales", authenticateToken, checkSubscription, async (req: any, res) => {
+  const { sale_date, quantity, commercial_price, default_price } = req.body;
+  const difference = (commercial_price - default_price) * quantity;
+  
+  await db.query("INSERT INTO commercial_sales (station_id, sale_date, quantity, commercial_price, default_price, difference) VALUES ($1, $2, $3, $4, $5, $6)",
+    [req.user.station_id, sale_date, quantity, commercial_price, default_price, difference]);
+  
+  res.json({ success: true });
+});
+
+app.delete("/api/commercial-sales/:id", authenticateToken, checkSubscription, async (req: any, res) => {
+  const { id } = req.params;
+  await db.query("DELETE FROM commercial_sales WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
   res.json({ success: true });
 });
 
