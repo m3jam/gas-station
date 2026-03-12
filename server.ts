@@ -937,13 +937,13 @@ app.get("/api/reports", authenticateToken, checkSubscription, async (req: any, r
     withdrawalParams.push(date);
   }
 
-  const totalWithdrawalsRes = await db.query(`SELECT SUM(amount) as total FROM withdrawals WHERE station_id = $1 ${withdrawalFilter}`,
+  const totalWithdrawalsRes = await db.query(`SELECT SUM(quantity) as total_liters FROM withdrawals WHERE station_id = $1 ${withdrawalFilter}`,
     withdrawalParams);
 
   res.json({
     products: productStatsRes.rows,
     totalExpenses: totalExpensesRes.rows[0]?.total || 0,
-    totalWithdrawals: totalWithdrawalsRes.rows[0]?.total || 0
+    totalWithdrawalsLiters: totalWithdrawalsRes.rows[0]?.total_liters || 0
   });
 });
 
@@ -980,7 +980,7 @@ app.get("/api/withdrawals", authenticateToken, checkSubscription, async (req: an
 });
 
 app.post("/api/withdrawals", authenticateToken, checkSubscription, async (req: any, res) => {
-  const { withdrawal_date, quantity, amount, reason } = req.body;
+  const { withdrawal_date, quantity, reason } = req.body;
   
   const client = await db.connect();
   try {
@@ -988,18 +988,19 @@ app.post("/api/withdrawals", authenticateToken, checkSubscription, async (req: a
     
     // Insert withdrawal
     await client.query("INSERT INTO withdrawals (station_id, withdrawal_date, quantity, amount, reason) VALUES ($1, $2, $3, $4, $5)",
-      [req.user.station_id, withdrawal_date, quantity || 0, amount || 0, reason]);
+      [req.user.station_id, withdrawal_date, quantity || 0, 0, reason]);
     
     // NO LONGER deducting from fuel stock as per user request
     // "السحب اريده يخصم من الارباح و المبيعات بالدينار وليس من مخزون كاز السيارات"
+    // Update: user now wants it to deduct from sales quantity in reports/dashboard
 
     await client.query('COMMIT');
 
     // Trigger notification
     sendPushNotification(
       req.user.station_id, 
-      "سحب جديد", 
-      `تم تسجيل سحب: ${(amount || 0).toLocaleString()} د.ع\nالسبب: ${reason || 'غير محدد'}\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
+      "سحب وقود جديد", 
+      `تم تسجيل سحب وقود: ${quantity} لتر\nالسبب: ${reason || 'غير محدد'}\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
       'withdrawal'
     );
 

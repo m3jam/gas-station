@@ -848,13 +848,28 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard 
                   title="إجمالي المبيعات" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_sales || 0), 0) - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.amount || 0), 0) || 0)).toLocaleString()} د.ع`}
+                  value={`${(stats.products.reduce((acc: any, p: any) => {
+                    const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
+                      ? (stats.withdrawals?.reduce((wAcc: any, w: any) => wAcc + (w.quantity || 0), 0) || 0)
+                      : 0;
+                    const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
+                    const effectiveSales = effectiveLiters * (p.sell_price || 0);
+                    return acc + effectiveSales;
+                  }, 0)).toLocaleString()} د.ع`}
                   icon={TrendingUp}
                   color="bg-indigo-500"
                 />
                 <StatCard 
                   title="صافي الربح" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - stats.totalExpenses - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.amount || 0), 0) || 0)).toLocaleString()} د.ع`}
+                  value={`${(stats.products.reduce((acc: any, p: any) => {
+                    const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
+                      ? (stats.withdrawals?.reduce((wAcc: any, w: any) => wAcc + (w.quantity || 0), 0) || 0)
+                      : 0;
+                    const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
+                    const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
+                    const effectiveProfit = effectiveLiters * profitPerLiter;
+                    return acc + effectiveProfit;
+                  }, 0) - stats.totalExpenses).toLocaleString()} د.ع`}
                   icon={TrendingUp}
                   color="bg-emerald-500"
                 />
@@ -984,8 +999,8 @@ export default function App() {
                     {stats.withdrawals?.map((w: any, idx: number) => (
                       <div key={idx} className="flex justify-between items-center p-3 border-b border-slate-50 last:border-0">
                         <div className="flex flex-col">
-                          <span className="text-rose-600 font-bold">{(w.amount || 0).toLocaleString()} د.ع</span>
-                          <span className="text-xs text-slate-400">{w.reason} {w.quantity > 0 ? `(${w.quantity} لتر)` : ''}</span>
+                          <span className="text-rose-600 font-bold">{(w.quantity || 0).toLocaleString()} لتر</span>
+                          <span className="text-xs text-slate-400">{w.reason}</span>
                         </div>
                         <span className="text-xs text-slate-400">{format(new Date(w.withdrawal_date), 'HH:mm')}</span>
                       </div>
@@ -996,7 +1011,7 @@ export default function App() {
                   </div>
                   <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center">
                     <span className="text-slate-600 font-bold">إجمالي السحوبات</span>
-                    <span className="text-rose-600 font-black">{(stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.amount || 0), 0) || 0).toLocaleString()} د.ع</span>
+                    <span className="text-rose-600 font-black">{(stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity || 0), 0) || 0).toLocaleString()} لتر</span>
                   </div>
                 </Card>
               </div>
@@ -1029,15 +1044,14 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Withdrawals Section */}
                 <div className="space-y-6">
-                  <Card title="تسجيل سحب">
+                  <Card title="تسجيل سحب (كاز السيارات)">
                     <form onSubmit={async (e: any) => {
                       e.preventDefault();
                       const formData = new FormData(e.target);
                       try {
                         await api.saveWithdrawal({
                           withdrawal_date: withdrawalsCommercialDate,
-                          amount: parseFloat(formData.get('amount') as string),
-                          quantity: parseFloat(formData.get('quantity') as string || '0'),
+                          quantity: parseFloat(formData.get('quantity') as string),
                           reason: formData.get('reason') as string
                         });
                         alert('تم حفظ السحب بنجاح');
@@ -1048,28 +1062,16 @@ export default function App() {
                         alert('خطأ في حفظ السحب');
                       }
                     }} className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ (دينار)</label>
-                          <input 
-                            name="amount"
-                            type="number" 
-                            step="1"
-                            required
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                            placeholder="0"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-2">الكمية (اختياري - لتر)</label>
-                          <input 
-                            name="quantity"
-                            type="number" 
-                            step="0.01"
-                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                            placeholder="0"
-                          />
-                        </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">الكمية (لتر)</label>
+                        <input 
+                          name="quantity"
+                          type="number" 
+                          step="0.01"
+                          required
+                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                          placeholder="0"
+                        />
                       </div>
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">السبب</label>
@@ -1091,7 +1093,6 @@ export default function App() {
                       <table className="w-full text-right">
                         <thead>
                           <tr className="border-b border-slate-100">
-                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">المبلغ</th>
                             <th className="py-3 px-4 text-slate-400 font-bold text-sm">الكمية</th>
                             <th className="py-3 px-4 text-slate-400 font-bold text-sm">السبب</th>
                             <th className="py-3 px-4 text-slate-400 font-bold text-sm">الإجراء</th>
@@ -1100,8 +1101,7 @@ export default function App() {
                         <tbody>
                           {withdrawalsData.map((w) => (
                             <tr key={w.id} className="border-b border-slate-50 last:border-0">
-                              <td className="py-3 px-4 font-bold text-rose-600">{(w.amount || 0).toLocaleString()} د.ع</td>
-                              <td className="py-3 px-4 text-slate-500 text-sm">{w.quantity || 0} لتر</td>
+                              <td className="py-3 px-4 font-bold text-slate-700">{w.quantity} لتر</td>
                               <td className="py-3 px-4 text-slate-500 text-sm">{w.reason}</td>
                               <td className="py-3 px-4">
                                 <button 
@@ -1912,13 +1912,28 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard 
                       title="إجمالي المبيعات" 
-                      value={`${reportsData.products.reduce((acc: any, p: any) => acc + (p.total_sales || 0), 0).toLocaleString()} د.ع`}
+                      value={`${(reportsData.products.reduce((acc: any, p: any) => {
+                        const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
+                          ? (reportsData.totalWithdrawalsLiters || 0)
+                          : 0;
+                        const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
+                        const effectiveSales = effectiveLiters * (p.sell_price || 0);
+                        return acc + effectiveSales;
+                      }, 0)).toLocaleString()} د.ع`}
                       icon={TrendingUp}
                       color="bg-indigo-500"
                     />
                     <StatCard 
                       title="إجمالي الربح" 
-                      value={`${reportsData.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0).toLocaleString()} د.ع`}
+                      value={`${(reportsData.products.reduce((acc: any, p: any) => {
+                        const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
+                          ? (reportsData.totalWithdrawalsLiters || 0)
+                          : 0;
+                        const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
+                        const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
+                        const effectiveProfit = effectiveLiters * profitPerLiter;
+                        return acc + effectiveProfit;
+                      }, 0)).toLocaleString()} د.ع`}
                       icon={TrendingUp}
                       color="bg-emerald-500"
                     />
@@ -1929,14 +1944,16 @@ export default function App() {
                       color="bg-rose-500"
                     />
                     <StatCard 
-                      title="إجمالي السحوبات" 
-                      value={`${(reportsData.totalWithdrawals || 0).toLocaleString()} د.ع`}
-                      icon={TrendingDown}
-                      color="bg-orange-500"
-                    />
-                    <StatCard 
                       title="صافي الدخل" 
-                      value={`${(reportsData.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - reportsData.totalExpenses - (reportsData.totalWithdrawals || 0)).toLocaleString()} د.ع`}
+                      value={`${(reportsData.products.reduce((acc: any, p: any) => {
+                        const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
+                          ? (reportsData.totalWithdrawalsLiters || 0)
+                          : 0;
+                        const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
+                        const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
+                        const effectiveProfit = effectiveLiters * profitPerLiter;
+                        return acc + effectiveProfit;
+                      }, 0) - reportsData.totalExpenses).toLocaleString()} د.ع`}
                       icon={TrendingUp}
                       color="bg-amber-500"
                     />
@@ -2088,45 +2105,6 @@ export default function App() {
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center justify-between">
-                            <span>الرابط الخاص (slug)</span>
-                            <button 
-                              type="button" 
-                              onClick={(e) => {
-                                const form = e.currentTarget.closest('form');
-                                const input = form?.querySelector('input[name="slug"]') as HTMLInputElement;
-                                if (input) input.value = '';
-                              }}
-                              className="text-rose-600 text-[10px] font-bold hover:underline"
-                            >
-                              حذف
-                            </button>
-                          </label>
-                          <input name="slug" type="text" placeholder="مثال: محطة-الامل" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center justify-between">
-                            <span>لوجو المحطة (PNG)</span>
-                            {newStationLogo && (
-                              <button 
-                                type="button" 
-                                onClick={() => setNewStationLogo('')}
-                                className="text-rose-600 text-[10px] font-bold hover:underline"
-                              >
-                                حذف
-                              </button>
-                            )}
-                          </label>
-                          <input type="file" accept="image/png" onChange={(e) => handleLogoUpload(e, setNewStationLogo)} className="w-full p-2 text-xs" />
-                          {newStationLogo && (
-                            <div className="mt-2 p-2 border border-slate-100 rounded-xl bg-slate-50 flex items-center justify-center">
-                              <img src={newStationLogo} alt="Preview" className="max-h-16 object-contain" />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
                           <label className="block text-sm font-bold text-slate-700 mb-2">نوع الاشتراك</label>
                           <select name="subscription_plan" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
                             <option value="Basic">أساسي</option>
@@ -2184,27 +2162,11 @@ export default function App() {
                               )}>
                                 <td className="py-4 font-bold text-slate-800">
                                   <div className="flex items-center gap-3">
-                                    {station.logo_url ? (
-                                      <img src={station.logo_url} alt="" className="w-10 h-10 rounded-lg object-contain bg-slate-50 border border-slate-100" />
-                                    ) : (
-                                      <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400">
-                                        <Fuel className="w-5 h-5" />
-                                      </div>
-                                    )}
+                                    <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400">
+                                      <Fuel className="w-5 h-5" />
+                                    </div>
                                     <div className="flex flex-col">
                                       <span className={cn(isInactive && "text-slate-400")}>{station.name}</span>
-                                      {station.slug && (
-                                        <div className="flex items-center gap-1 mt-1">
-                                          <span className="text-[10px] text-indigo-600 font-bold">/{station.slug}</span>
-                                          <button 
-                                            onClick={() => copyStationLink(station.slug)}
-                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all"
-                                            title="نسخ رابط الدخول"
-                                          >
-                                            <Copy className="w-3 h-3" />
-                                          </button>
-                                        </div>
-                                      )}
                                       {isPending && (
                                         <span className="text-[10px] text-amber-600 font-black animate-pulse flex items-center gap-1">
                                           <Clock className="w-3 h-3" /> ينتظر التفعيل
@@ -2491,9 +2453,7 @@ export default function App() {
                   await api.updateStation(editingStation.id, {
                     name: data.name,
                     address: data.address,
-                    phone: data.phone,
-                    slug: data.slug,
-                    logo_url: previewLogo || null
+                    phone: data.phone
                   });
                   
                   // Update notification settings separately
@@ -2515,23 +2475,6 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">اسم المحطة</label>
                     <input name="name" type="text" defaultValue={editingStation.name} required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center justify-between">
-                      <span>الرابط الخاص (slug)</span>
-                      <button 
-                        type="button" 
-                        onClick={(e) => {
-                          const form = e.currentTarget.closest('form');
-                          const input = form?.querySelector('input[name="slug"]') as HTMLInputElement;
-                          if (input) input.value = '';
-                        }}
-                        className="text-rose-600 text-[10px] font-bold hover:underline"
-                      >
-                        حذف الرابط
-                      </button>
-                    </label>
-                    <input name="slug" type="text" defaultValue={editingStation.slug} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
                   </div>
                 </div>
 
@@ -2588,22 +2531,6 @@ export default function App() {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">رقم الهاتف</label>
                     <input name="phone" type="text" defaultValue={editingStation.phone} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">تغيير اللوجو (PNG)</label>
-                  <div className="flex items-center gap-4">
-                    <input type="file" accept="image/png" onChange={(e) => handleLogoUpload(e, setPreviewLogo)} className="flex-1 p-2 text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
-                    {previewLogo && (
-                      <button 
-                        type="button" 
-                        onClick={() => setPreviewLogo('')}
-                        className="text-rose-600 text-xs font-bold hover:underline"
-                      >
-                        حذف اللوجو
-                      </button>
-                    )}
                   </div>
                 </div>
 
