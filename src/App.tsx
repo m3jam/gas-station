@@ -33,7 +33,8 @@ import {
   ArrowRight,
   Copy,
   Edit,
-  HandCoins
+  HandCoins,
+  History
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -185,7 +186,7 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, disabled }: any) => (
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(localStorage.getItem('activeTab') || 'dashboard');
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -221,6 +222,7 @@ export default function App() {
   const [loanHistory, setLoanHistory] = useState<any[]>([]);
 
   useEffect(() => {
+    localStorage.setItem('activeTab', activeTab);
     setSelectedProductId(null);
   }, [activeTab]);
 
@@ -827,7 +829,7 @@ export default function App() {
 
           {(!subscriptionError || user?.role === 'SuperAdmin' || activeTab === 'subscription' || activeTab === 'support') && (
             <>
-              {activeTab === 'dashboard' && stats && user.role !== 'SuperAdmin' && (
+              {activeTab === 'dashboard' && user.role !== 'SuperAdmin' && (
             <motion.div 
               key="dashboard"
               initial={{ opacity: 0, x: -20 }}
@@ -835,6 +837,12 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
+              {!stats ? (
+                <div className="flex items-center justify-center py-20">
+                  <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
+                </div>
+              ) : (
+                <>
               {/* Top Stats */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard 
@@ -991,6 +999,8 @@ export default function App() {
                   </div>
                 </Card>
               </div>
+              </>
+              )}
             </motion.div>
           )}
 
@@ -1781,6 +1791,60 @@ export default function App() {
                   </table>
                 </div>
               </Card>
+
+              {user.role === 'Owner' && stationData && (
+                <Card title="إعدادات المحطة العامة">
+                  <form onSubmit={async (e: any) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.target);
+                    const data = Object.fromEntries(formData);
+                    try {
+                      await api.updateStation(stationData.id, {
+                        ...stationData,
+                        ...data,
+                        logo_url: previewLogo || stationData.logo_url
+                      });
+                      alert('تم تحديث بيانات المحطة بنجاح');
+                      loadStationData();
+                    } catch (err) {
+                      alert('خطأ في التحديث');
+                    }
+                  }} className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">اسم المحطة</label>
+                        <input name="name" type="text" defaultValue={stationData.name} required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">الرابط الخاص (slug)</label>
+                        <input name="slug" type="text" defaultValue={stationData.slug} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">العنوان</label>
+                        <input name="address" type="text" defaultValue={stationData.address} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">رقم الهاتف</label>
+                        <input name="phone" type="text" defaultValue={stationData.phone} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">شعار المحطة (PNG)</label>
+                      <div className="flex items-center gap-4">
+                        <input type="file" accept="image/png" onChange={(e) => handleLogoUpload(e, setPreviewLogo)} className="flex-1 p-2 text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                        {(previewLogo || stationData.logo_url) && (
+                          <img src={previewLogo || stationData.logo_url} alt="Logo Preview" className="w-12 h-12 object-contain rounded-lg border border-slate-200" referrerPolicy="no-referrer" />
+                        )}
+                      </div>
+                    </div>
+                    <button type="submit" className="w-full bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100">
+                      حفظ التغييرات
+                    </button>
+                  </form>
+                </Card>
+              )}
 
               {user.role === 'Owner' && (
                 <Card title="إشعارات المتصفح">

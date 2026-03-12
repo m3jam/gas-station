@@ -520,11 +520,19 @@ app.post("/api/stations/:id/toggle", authenticateToken, async (req: any, res) =>
 });
 
 app.put("/api/stations/:id", authenticateToken, async (req: any, res) => {
-  if (req.user.role !== 'SuperAdmin') return res.status(403).json({ error: "Access denied" });
   const { id } = req.params;
+  const isSuperAdmin = req.user.role === 'SuperAdmin';
+  const isOwnerOfStation = req.user.role === 'Owner' && req.user.station_id === parseInt(id);
+
+  if (!isSuperAdmin && !isOwnerOfStation) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+
   const { name, address, phone, slug, logo_url } = req.body;
   
   try {
+    // If not SuperAdmin, we should probably not allow changing the slug if it's already set? 
+    // But the user asked to ensure slug is saved correctly.
     await db.query(
       "UPDATE stations SET name = $1, address = $2, phone = $3, slug = $4, logo_url = $5 WHERE id = $6",
       [name, address, phone, slug, logo_url, id]
