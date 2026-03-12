@@ -248,7 +248,8 @@ initDb().catch(err => console.error("Database initialization failed:", err));
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Health check
 app.get("/health", (req, res) => {
@@ -412,7 +413,7 @@ app.post("/api/request-manual-activation", authenticateToken, async (req: any, r
 
 app.post("/api/stations", authenticateToken, async (req: any, res) => {
   if (req.user.role !== 'SuperAdmin') return res.status(403).json({ error: "Access denied" });
-  const { name, address, phone, subscription_plan, months, owner_username, owner_password } = req.body;
+  const { name, address, phone, subscription_plan, months, owner_username, owner_password, slug, logo_url } = req.body;
   
   if (!name || !owner_username || !owner_password) {
     return res.status(400).json({ error: "Missing required fields" });
@@ -432,8 +433,8 @@ app.post("/api/stations", authenticateToken, async (req: any, res) => {
     }
 
     const stationRes = await client.query(
-      "INSERT INTO stations (name, address, phone, subscription_plan, subscription_expires_at, is_active, subscription_status, owner_username, owner_password_plain) VALUES ($1, $2, $3, $4, $5, 0, 'Inactive', $6, $7) RETURNING id",
-      [name, address, phone, subscription_plan || 'Basic', null, owner_username, owner_password]
+      "INSERT INTO stations (name, address, phone, subscription_plan, subscription_expires_at, is_active, subscription_status, owner_username, owner_password_plain, slug, logo_url) VALUES ($1, $2, $3, $4, $5, 0, 'Inactive', $6, $7, $8, $9) RETURNING id",
+      [name, address, phone, subscription_plan || 'Basic', expiryDate, owner_username, owner_password, slug || null, logo_url || null]
     );
     
     const stationId = stationRes.rows[0].id;
@@ -520,22 +521,32 @@ app.post("/api/stations/:id/toggle", authenticateToken, async (req: any, res) =>
 });
 
 app.put("/api/stations/:id", authenticateToken, async (req: any, res) => {
-  const { id } = req.params;
-  const isSuperAdmin = req.user.role === 'SuperAdmin';
-  const isOwnerOfStation = req.user.role === 'Owner' && req.user.station_id === parseInt(id);
-
-  if (!isSuperAdmin && !isOwnerOfStation) {
+  if (req.user.role !== 'SuperAdmin') {
     return res.status(403).json({ error: "Access denied" });
   }
 
-  const { name, address, phone, slug, logo_url } = req.body;
+  const { id } = req.params;
+  let { name, address, phone, slug, logo_url } = req.body;
+  
+  if (slug === "") slug = null;
   
   try {
-    // If not SuperAdmin, we should probably not allow changing the slug if it's already set? 
-    // But the user asked to ensure slug is saved correctly.
+    const stationId = Number(id);
+    if (isNaN(stationId)) {
+      return res.status(400).json({ error: "Invalid station ID" });
+    }
+
+    // Check if slug is taken by another station
+    if (slug) {
+      const existingSlug = await db.query("SELECT id FROM stations WHERE slug = $1 AND id != $2", [slug, stationId]);
+      if (existingSlug.rows.length > 0) {
+        return res.status(400).json({ error: "هذا الرابط (slug) مستخدم بالفعل لمحطة أخرى" });
+      }
+    }
+
     await db.query(
       "UPDATE stations SET name = $1, address = $2, phone = $3, slug = $4, logo_url = $5 WHERE id = $6",
-      [name, address, phone, slug, logo_url, id]
+      [name, address, phone, slug, logo_url, stationId]
     );
     res.json({ success: true });
   } catch (err: any) {
@@ -1178,19 +1189,24 @@ app.put("/api/stations/:id/notification-settings", authenticateToken, async (req
   const { id } = req.params;
   const { notifications_enabled, notify_expenses, notify_withdrawals, notify_commercial_sales } = req.body;
   
-  await db.query(`
-    UPDATE stations 
-    SET notifications_enabled = $1, notify_expenses = $2, notify_withdrawals = $3, notify_commercial_sales = $4
-    WHERE id = $5
-  `, [
-    notifications_enabled ? 1 : 0, 
-    notify_expenses ? 1 : 0, 
-    notify_withdrawals ? 1 : 0, 
-    notify_commercial_sales ? 1 : 0, 
-    id
-  ]);
-  
-  res.json({ success: true });
+  try {
+    await db.query(`
+      UPDATE stations 
+      SET notifications_enabled = $1, notify_expenses = $2, notify_withdrawals = $3, notify_commercial_sales = $4
+      WHERE id = $5
+    `, [
+      notifications_enabled ? 1 : 0, 
+      notify_expenses ? 1 : 0, 
+      notify_withdrawals ? 1 : 0, 
+      notify_commercial_sales ? 1 : 0, 
+      Number(id)
+    ]);
+    
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Error updating notification settings:", err);
+    res.status(400).json({ error: err.message || "Failed to update notification settings" });
+  }
 });
 
 // --- Stripe Endpoints ---
