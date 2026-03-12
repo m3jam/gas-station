@@ -30,7 +30,10 @@ import {
   AlertTriangle,
   Power,
   Gauge,
-  ArrowRight
+  ArrowRight,
+  Copy,
+  Edit,
+  HandCoins
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -127,6 +130,18 @@ const api = {
   getCommercialSales: (date: string) => api.fetch(`/commercial-sales?date=${date}`),
   saveCommercialSale: (data: any) => api.fetch('/commercial-sales', { method: 'POST', body: JSON.stringify(data) }),
   deleteCommercialSale: (id: number) => api.fetch(`/commercial-sales/${id}`, { method: 'DELETE' }),
+  getPublicStationInfo: (slug: string) => api.fetch(`/public/stations/${slug}`),
+  updateStation: (id: number, data: any) => api.fetch(`/stations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getVapidPublicKey: () => api.fetch('/notifications/vapid-public-key'),
+  subscribeNotifications: (subscription: any) => api.fetch('/notifications/subscribe', { method: 'POST', body: JSON.stringify({ subscription }) }),
+  unsubscribeNotifications: (subscription: any) => api.fetch('/notifications/unsubscribe', { method: 'POST', body: JSON.stringify({ subscription }) }),
+  updateNotificationSettings: (data: any) => api.fetch('/station-info/notifications', { method: 'PUT', body: JSON.stringify(data) }),
+  updateStationNotificationSettings: (id: number, data: any) => api.fetch(`/stations/${id}/notification-settings`, { method: 'PUT', body: JSON.stringify(data) }),
+  getLoans: () => api.fetch('/loans'),
+  saveLoan: (data: any) => api.fetch('/loans', { method: 'POST', body: JSON.stringify(data) }),
+  deleteLoan: (id: number) => api.fetch(`/loans/${id}`, { method: 'DELETE' }),
+  repayLoan: (id: number, data: any) => api.fetch(`/loans/${id}/repay`, { method: 'POST', body: JSON.stringify(data) }),
+  getLoanHistory: (id: number) => api.fetch(`/loans/${id}/history`),
 };
 
 // --- Components ---
@@ -174,6 +189,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [currentStation, setCurrentStation] = useState<any>(null);
+  const [isCustomLogin, setIsCustomLogin] = useState(false);
+  const [slugError, setSlugError] = useState(false);
+  const [editingStation, setEditingStation] = useState<any>(null);
+  const [previewLogo, setPreviewLogo] = useState<string>('');
+  const [newStationLogo, setNewStationLogo] = useState<string>('');
   const [stats, setStats] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
   const [pumps, setPumps] = useState<any[]>([]);
@@ -192,32 +213,56 @@ export default function App() {
   const [withdrawalsData, setWithdrawalsData] = useState<any[]>([]);
   const [commercialSalesData, setCommercialSalesData] = useState<any[]>([]);
   const [withdrawalsCommercialDate, setWithdrawalsCommercialDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const [loans, setLoans] = useState<any[]>([]);
+  const [showRepayModal, setShowRepayModal] = useState<any>(null);
+  const [showHistoryModal, setShowHistoryModal] = useState<any>(null);
+  const [loanHistory, setLoanHistory] = useState<any[]>([]);
 
   useEffect(() => {
     setSelectedProductId(null);
   }, [activeTab]);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    if (token && storedUser) {
-      const parsedUser = JSON.parse(storedUser);
-      setUser(parsedUser);
-      if (parsedUser.role === 'SuperAdmin') {
-        setActiveTab('admin');
+    const init = async () => {
+      const path = window.location.pathname.substring(1);
+      if (path && path !== 'admin') {
+        try {
+          const station = await api.getPublicStationInfo(path);
+          if (station) {
+            setCurrentStation(station);
+            setIsCustomLogin(true);
+          }
+        } catch (err) {
+          setSlugError(true);
+        }
+      } else if (path === 'admin') {
+        setIsCustomLogin(false);
       }
 
-      // Handle Stripe Redirects
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('success') === 'true') {
-        alert('تم تفعيل الاشتراك بنجاح! شكراً لثقتكم.');
-        window.history.replaceState({}, document.title, "/");
-      } else if (params.get('success') === 'false') {
-        alert('تم إلغاء عملية الدفع.');
-        window.history.replaceState({}, document.title, "/");
+      const token = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
+      if (token && storedUser) {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+        if (parsedUser.role === 'SuperAdmin') {
+          setActiveTab('admin');
+        }
+
+        // Handle Stripe Redirects
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('success') === 'true') {
+          alert('تم تفعيل الاشتراك بنجاح! شكراً لثقتكم.');
+          window.history.replaceState({}, document.title, "/");
+        } else if (params.get('success') === 'false') {
+          alert('تم إلغاء عملية الدفع.');
+          window.history.replaceState({}, document.title, "/");
+        }
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    };
+    init();
   }, []);
 
   useEffect(() => {
@@ -239,6 +284,87 @@ export default function App() {
     }
   }, [user, date, activeTab]);
 
+  useEffect(() => {
+    if (user && user.role === 'Owner') {
+      checkNotificationStatus();
+    }
+  }, [user]);
+
+  const checkNotificationStatus = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      return;
+    }
+
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      setIsSubscribed(!!subscription);
+      setNotificationPermission(Notification.permission);
+    } catch (err) {
+      console.error("Error checking notification status:", err);
+    }
+  };
+
+  const subscribeToNotifications = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert('متصفحك لا يدعم الإشعارات');
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      
+      if (permission !== 'granted') {
+        alert('يجب السماح بالإشعارات لاستقبال التنبيهات');
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const { publicKey } = await api.getVapidPublicKey();
+      
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: publicKey
+      });
+
+      await api.subscribeNotifications(subscription);
+      setIsSubscribed(true);
+      
+      // Also enable notifications for the station if it's the owner
+      if (user.role === 'Owner') {
+        await api.updateNotificationSettings({ notifications_enabled: true });
+        loadStationData();
+      }
+      
+      alert('تم تفعيل الإشعارات بنجاح');
+    } catch (err) {
+      console.error("Subscription error:", err);
+      alert('فشل تفعيل الإشعارات');
+    }
+  };
+
+  const unsubscribeFromNotifications = async () => {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await subscription.unsubscribe();
+        await api.unsubscribeNotifications(subscription);
+      }
+      setIsSubscribed(false);
+      
+      if (user.role === 'Owner') {
+        await api.updateNotificationSettings({ notifications_enabled: false });
+        loadStationData();
+      }
+      
+      alert('تم إيقاف الإشعارات');
+    } catch (err) {
+      console.error("Unsubscription error:", err);
+    }
+  };
+
   const loadStations = async () => {
     try {
       const data = await api.fetch('/stations');
@@ -246,6 +372,27 @@ export default function App() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleLogoUpload = (e: any, setLogo: (url: string) => void) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setLogo(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const copyStationLink = (slug: string) => {
+    if (!slug) {
+      alert('يرجى تعيين رابط للمحطة أولاً');
+      return;
+    }
+    const url = `${window.location.origin}/${slug}`;
+    navigator.clipboard.writeText(url);
+    alert('تم نسخ الرابط بنجاح');
   };
 
   const loadStationData = async () => {
@@ -269,6 +416,11 @@ export default function App() {
       setStats(statsData);
       setProducts(productsData);
       setPumps(pumpsData);
+      
+      if (user && user.role !== 'Employee') {
+        const loansData = await api.getLoans();
+        setLoans(loansData);
+      }
       
       if (activeTab === 'reports') {
         loadReports();
@@ -367,6 +519,26 @@ export default function App() {
 
   if (loading) return <div className="flex items-center justify-center h-screen">جاري التحميل...</div>;
 
+  if (slugError) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <Card className="max-w-md w-full text-center p-12">
+          <div className="bg-rose-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <X className="text-rose-600 w-10 h-10" />
+          </div>
+          <h1 className="text-2xl font-black text-slate-800 mb-4">المحطة غير موجودة</h1>
+          <p className="text-slate-500 font-bold mb-8">عذراً، الرابط الذي تحاول الوصول إليه غير صحيح أو تم حذفه.</p>
+          <button 
+            onClick={() => window.location.href = '/'}
+            className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all"
+          >
+            العودة للرئيسية
+          </button>
+        </Card>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -376,10 +548,21 @@ export default function App() {
           className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-100"
         >
           <div className="text-center mb-8">
-            <div className="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-200">
-              <Fuel className="text-white w-8 h-8" />
-            </div>
-            <h1 className="text-2xl font-black text-slate-800">نظام {user?.station_name || 'محطتي'}</h1>
+            {isCustomLogin && currentStation?.logo_url ? (
+              <img 
+                src={currentStation.logo_url} 
+                alt={currentStation.name} 
+                className="max-h-32 mx-auto mb-6 object-contain"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="bg-indigo-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-200">
+                <Fuel className="text-white w-8 h-8" />
+              </div>
+            )}
+            <h1 className="text-2xl font-black text-slate-800">
+              {isCustomLogin ? currentStation?.name : 'نظام محطتي'}
+            </h1>
             <p className="text-slate-500 mt-2 font-medium">إدارة محطات الوقود الذكية</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
@@ -389,7 +572,7 @@ export default function App() {
                 name="username" 
                 type="text" 
                 required 
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none text-right"
                 placeholder="أدخل اسم المستخدم"
               />
             </div>
@@ -399,7 +582,7 @@ export default function App() {
                 name="password" 
                 type="password" 
                 required 
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none text-right"
                 placeholder="••••••••"
               />
             </div>
@@ -477,6 +660,15 @@ export default function App() {
                 disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
                 onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('expenses'); setIsSidebarOpen(false); } }} 
               />
+              {user.role !== 'Employee' && (
+                <SidebarItem 
+                  icon={HandCoins} 
+                  label="القروض" 
+                  active={activeTab === 'loans'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('loans'); setIsSidebarOpen(false); } }} 
+                />
+              )}
               <SidebarItem 
                 icon={Package} 
                 label="المنتجات والمضخات" 
@@ -558,6 +750,7 @@ export default function App() {
                   {activeTab === 'readings' && 'إدخال عدادات اليوم'}
                   {activeTab === 'withdrawals_commercial' && 'السحب والتجاري'}
                   {activeTab === 'expenses' && 'إدارة المصاريف'}
+                  {activeTab === 'loans' && 'إدارة القروض'}
                   {activeTab === 'setup' && 'المنتجات والمضخات'}
                   {activeTab === 'inventory' && 'إدارة الواردات والخزين'}
                   {activeTab === 'settings' && 'إعدادات المحطة'}
@@ -1278,6 +1471,139 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'loans' && user.role !== 'SuperAdmin' && (
+            <motion.div 
+              key="loans"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="max-w-4xl mx-auto space-y-6"
+            >
+              <Card title="إضافة قرض جديد">
+                <form onSubmit={async (e: any) => {
+                  e.preventDefault();
+                  const formData = new FormData(e.target);
+                  try {
+                    await api.saveLoan({
+                      employee_name: formData.get('employee_name'),
+                      amount: parseFloat(formData.get('amount') as string),
+                      loan_date: formData.get('loan_date'),
+                    });
+                    alert('تم إضافة القرض بنجاح');
+                    loadDashboardData();
+                    e.target.reset();
+                  } catch (err) {
+                    alert('خطأ في إضافة القرض');
+                  }
+                }} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">اسم الموظف</label>
+                      <input name="employee_name" type="text" required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">مبلغ القرض</label>
+                      <input name="amount" type="number" required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ القرض</label>
+                      <input name="loan_date" type="date" defaultValue={format(new Date(), 'yyyy-MM-dd')} required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                  </div>
+                  <button className="w-full bg-indigo-600 text-white p-4 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
+                    إضافة القرض
+                  </button>
+                </form>
+              </Card>
+
+              <Card title="جدول القروض">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="pb-4 font-bold text-slate-500 text-sm">اسم الموظف</th>
+                        <th className="pb-4 font-bold text-slate-500 text-sm">المبلغ الأصلي</th>
+                        <th className="pb-4 font-bold text-slate-500 text-sm">إجمالي المسدد</th>
+                        <th className="pb-4 font-bold text-slate-500 text-sm">المبلغ المتبقي</th>
+                        <th className="pb-4 font-bold text-slate-500 text-sm">التاريخ</th>
+                        <th className="pb-4 font-bold text-slate-500 text-sm text-center">الإجراءات</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {loans.map((loan: any) => {
+                        const remaining = loan.amount - loan.total_paid;
+                        const isFullyPaid = remaining <= 0;
+                        return (
+                          <tr key={loan.id} className={cn("hover:bg-slate-50 transition-colors", isFullyPaid && "bg-emerald-50/50")}>
+                            <td className="py-4 font-bold text-slate-800">
+                              {loan.employee_name}
+                              {isFullyPaid && <span className="mr-2 text-[10px] bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full">مسدد بالكامل</span>}
+                            </td>
+                            <td className="py-4 font-bold text-slate-600">{loan.amount.toLocaleString()} د.ع</td>
+                            <td className="py-4 font-bold text-emerald-600">{loan.total_paid.toLocaleString()} د.ع</td>
+                            <td className="py-4 font-bold text-rose-600">{remaining.toLocaleString()} د.ع</td>
+                            <td className="py-4 text-slate-500 text-sm">{format(new Date(loan.loan_date), 'yyyy-MM-dd')}</td>
+                            <td className="py-4">
+                              <div className="flex items-center justify-center gap-2">
+                                {!isFullyPaid && (
+                                  <button 
+                                    onClick={() => setShowRepayModal(loan)}
+                                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                    title="تسديد"
+                                  >
+                                    <CreditCard className="w-4 h-4" />
+                                  </button>
+                                )}
+                                <button 
+                                  onClick={async () => {
+                                    try {
+                                      const history = await api.getLoanHistory(loan.id);
+                                      setLoanHistory(history);
+                                      setShowHistoryModal(loan);
+                                    } catch (err) {
+                                      alert('خطأ في جلب السجل');
+                                    }
+                                  }}
+                                  className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-all"
+                                  title="سجل التسديدات"
+                                >
+                                  <History className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm('هل أنت متأكد من حذف هذا القرض؟')) {
+                                      try {
+                                        await api.deleteLoan(loan.id);
+                                        loadDashboardData();
+                                      } catch (err) {
+                                        alert('خطأ في الحذف');
+                                      }
+                                    }
+                                  }}
+                                  className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                  title="حذف"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {loans.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
+                            لا توجد قروض مسجلة
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </motion.div>
+          )}
+
           {activeTab === 'setup' && user.role !== 'SuperAdmin' && (
             <motion.div 
               key="setup"
@@ -1455,6 +1781,35 @@ export default function App() {
                   </table>
                 </div>
               </Card>
+
+              {user.role === 'Owner' && (
+                <Card title="إشعارات المتصفح">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-600 text-sm mb-1">استقبل تنبيهات فورية عند إضافة مصروفات أو سحوبات</p>
+                      <p className="text-[10px] text-slate-400">تصل الإشعارات حتى لو كان التطبيق مغلقاً</p>
+                    </div>
+                    <button 
+                      onClick={isSubscribed ? unsubscribeFromNotifications : subscribeToNotifications}
+                      className={cn(
+                        "px-6 py-2 rounded-xl font-bold transition-all flex items-center gap-2",
+                        isSubscribed 
+                          ? "bg-rose-50 text-rose-600 hover:bg-rose-100" 
+                          : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100"
+                      )}
+                    >
+                      <Bell className={cn("w-4 h-4", isSubscribed && "fill-current")} />
+                      {isSubscribed ? 'إيقاف الإشعارات' : 'تفعيل الإشعارات'}
+                    </button>
+                  </div>
+                  {notificationPermission === 'denied' && (
+                    <div className="mt-4 p-3 bg-rose-50 rounded-xl flex items-center gap-3 text-rose-600 text-xs">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>لقد قمت بحظر الإشعارات من إعدادات المتصفح. يرجى السماح بها يدوياً لاستقبال التنبيهات.</span>
+                    </div>
+                  )}
+                </Card>
+              )}
             </motion.div>
           )}
 
@@ -1678,13 +2033,18 @@ export default function App() {
                     <form onSubmit={async (e: any) => {
                       e.preventDefault();
                       const formData = new FormData(e.target);
+                      const data = Object.fromEntries(formData);
                       try {
                         await api.fetch('/stations', { 
                           method: 'POST', 
-                          body: JSON.stringify(Object.fromEntries(formData)) 
+                          body: JSON.stringify({
+                            ...data,
+                            logo_url: newStationLogo
+                          }) 
                         });
                         alert('تم إنشاء المحطة والمالك بنجاح');
                         e.target.reset();
+                        setNewStationLogo('');
                         loadStations();
                       } catch (err) {
                         alert('خطأ في الإضافة');
@@ -1693,6 +2053,21 @@ export default function App() {
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">اسم المحطة</label>
                         <input name="name" type="text" required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-2">الرابط الخاص (slug)</label>
+                          <input name="slug" type="text" placeholder="مثال: محطة-الامل" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-2">لوجو المحطة (PNG)</label>
+                          <input type="file" accept="image/png" onChange={(e) => handleLogoUpload(e, setNewStationLogo)} className="w-full p-2 text-xs" />
+                          {newStationLogo && (
+                            <div className="mt-2 p-2 border border-slate-100 rounded-xl bg-slate-50 flex items-center justify-center">
+                              <img src={newStationLogo} alt="Preview" className="max-h-16 object-contain" />
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
@@ -1752,28 +2127,49 @@ export default function App() {
                                 isInactive && "opacity-50 grayscale-[0.8] bg-slate-50/50"
                               )}>
                                 <td className="py-4 font-bold text-slate-800">
-                                  <div className="flex flex-col">
-                                    <span className={cn(isInactive && "text-slate-400")}>{station.name}</span>
-                                    {isPending && (
-                                      <span className="text-[10px] text-amber-600 font-black animate-pulse flex items-center gap-1">
-                                        <Clock className="w-3 h-3" /> ينتظر التفعيل
-                                      </span>
+                                  <div className="flex items-center gap-3">
+                                    {station.logo_url ? (
+                                      <img src={station.logo_url} alt="" className="w-10 h-10 rounded-lg object-contain bg-slate-50 border border-slate-100" />
+                                    ) : (
+                                      <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400">
+                                        <Fuel className="w-5 h-5" />
+                                      </div>
                                     )}
-                                    {isNew && (
-                                      <span className="text-[10px] text-slate-500 font-black flex items-center gap-1">
-                                        <Clock className="w-3 h-3" /> بانتظار الدفع
-                                      </span>
-                                    )}
-                                    {isExpired && (
-                                      <span className="text-[10px] text-rose-600 font-black flex items-center gap-1">
-                                        <AlertTriangle className="w-3 h-3" /> منتهي الصلاحية
-                                      </span>
-                                    )}
-                                    {!station.is_active && !isExpired && !isPending && !isNew && (
-                                      <span className="text-[10px] text-slate-400 font-black flex items-center gap-1">
-                                        <Power className="w-3 h-3" /> معطل يدوياً
-                                      </span>
-                                    )}
+                                    <div className="flex flex-col">
+                                      <span className={cn(isInactive && "text-slate-400")}>{station.name}</span>
+                                      {station.slug && (
+                                        <div className="flex items-center gap-1 mt-1">
+                                          <span className="text-[10px] text-indigo-600 font-bold">/{station.slug}</span>
+                                          <button 
+                                            onClick={() => copyStationLink(station.slug)}
+                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all"
+                                            title="نسخ رابط الدخول"
+                                          >
+                                            <Copy className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      )}
+                                      {isPending && (
+                                        <span className="text-[10px] text-amber-600 font-black animate-pulse flex items-center gap-1">
+                                          <Clock className="w-3 h-3" /> ينتظر التفعيل
+                                        </span>
+                                      )}
+                                      {isNew && (
+                                        <span className="text-[10px] text-slate-500 font-black flex items-center gap-1">
+                                          <Clock className="w-3 h-3" /> بانتظار الدفع
+                                        </span>
+                                      )}
+                                      {isExpired && (
+                                        <span className="text-[10px] text-rose-600 font-black flex items-center gap-1">
+                                          <AlertTriangle className="w-3 h-3" /> منتهي الصلاحية
+                                        </span>
+                                      )}
+                                      {!station.is_active && !isExpired && !isPending && !isNew && (
+                                        <span className="text-[10px] text-slate-400 font-black flex items-center gap-1">
+                                          <Power className="w-3 h-3" /> معطل يدوياً
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                               <td className="py-4">
@@ -1824,6 +2220,16 @@ export default function App() {
                               </td>
                               <td className="py-4">
                                 <div className="flex items-center gap-2">
+                                  <button 
+                                    onClick={() => {
+                                      setEditingStation(station);
+                                      setPreviewLogo(station.logo_url || '');
+                                    }}
+                                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                    title="تعديل المحطة"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </button>
                                   {(isPending || isNew) ? (
                                     <button 
                                       onClick={async () => {
@@ -1997,6 +2403,292 @@ export default function App() {
       )}
     </AnimatePresence>
       </main>
+      {editingStation && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col md:flex-row"
+          >
+            {/* Edit Form */}
+            <div className="flex-1 p-8 overflow-y-auto border-l border-slate-100">
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                  <div className="p-3 bg-indigo-100 text-indigo-600 rounded-2xl">
+                    <Edit className="w-6 h-6" />
+                  </div>
+                  تعديل بيانات المحطة
+                </h3>
+                <button 
+                  onClick={() => setEditingStation(null)}
+                  className="p-2 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+
+              <form onSubmit={async (e: any) => {
+                e.preventDefault();
+                const formData = new FormData(e.target);
+                const data = Object.fromEntries(formData);
+                try {
+                  await api.updateStation(editingStation.id, {
+                    ...data,
+                    logo_url: previewLogo
+                  });
+                  
+                  // Update notification settings separately
+                  await api.updateStationNotificationSettings(editingStation.id, {
+                    notifications_enabled: data.notifications_enabled === 'on',
+                    notify_expenses: data.notify_expenses === 'on',
+                    notify_withdrawals: data.notify_withdrawals === 'on',
+                    notify_commercial_sales: data.notify_commercial_sales === 'on'
+                  });
+
+                  alert('تم تحديث بيانات المحطة بنجاح');
+                  setEditingStation(null);
+                  loadStations();
+                } catch (err) {
+                  alert('خطأ في التحديث');
+                }
+              }} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">اسم المحطة</label>
+                    <input name="name" type="text" defaultValue={editingStation.name} required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">الرابط الخاص (slug)</label>
+                    <input name="slug" type="text" defaultValue={editingStation.slug} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
+                  <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-indigo-600" />
+                    إعدادات الإشعارات
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100 cursor-pointer hover:border-indigo-200 transition-all">
+                      <input 
+                        type="checkbox" 
+                        name="notifications_enabled" 
+                        defaultChecked={editingStation.notifications_enabled}
+                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+                      />
+                      <span className="text-sm font-bold text-slate-700">تفعيل الإشعارات للمحطة</span>
+                    </label>
+                    <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100 cursor-pointer hover:border-indigo-200 transition-all">
+                      <input 
+                        type="checkbox" 
+                        name="notify_expenses" 
+                        defaultChecked={editingStation.notify_expenses}
+                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+                      />
+                      <span className="text-sm font-bold text-slate-700">إشعارات المصروفات</span>
+                    </label>
+                    <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100 cursor-pointer hover:border-indigo-200 transition-all">
+                      <input 
+                        type="checkbox" 
+                        name="notify_withdrawals" 
+                        defaultChecked={editingStation.notify_withdrawals}
+                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+                      />
+                      <span className="text-sm font-bold text-slate-700">إشعارات السحوبات</span>
+                    </label>
+                    <label className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-100 cursor-pointer hover:border-indigo-200 transition-all">
+                      <input 
+                        type="checkbox" 
+                        name="notify_commercial_sales" 
+                        defaultChecked={editingStation.notify_commercial_sales}
+                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" 
+                      />
+                      <span className="text-sm font-bold text-slate-700">إشعارات البيع التجاري</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">العنوان</label>
+                    <input name="address" type="text" defaultValue={editingStation.address} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">رقم الهاتف</label>
+                    <input name="phone" type="text" defaultValue={editingStation.phone} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">تغيير اللوجو (PNG)</label>
+                  <div className="flex items-center gap-4">
+                    <input type="file" accept="image/png" onChange={(e) => handleLogoUpload(e, setPreviewLogo)} className="flex-1 p-2 text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                    {previewLogo && (
+                      <button 
+                        type="button" 
+                        onClick={() => setPreviewLogo('')}
+                        className="text-rose-600 text-xs font-bold hover:underline"
+                      >
+                        حذف اللوجو
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button type="submit" className="flex-1 bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100">
+                    حفظ التغييرات
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setEditingStation(null)}
+                    className="px-8 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Preview Section */}
+            <div className="w-full md:w-80 bg-slate-50 p-8 flex flex-col items-center justify-center border-r border-slate-100">
+              <div className="text-center mb-8">
+                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-3 py-1 rounded-full">معاينة شاشة الدخول</span>
+                <p className="text-xs text-slate-400 mt-2">هكذا ستظهر الشاشة لأصحاب المحطة</p>
+              </div>
+
+              <div className="w-full aspect-[9/16] bg-white rounded-[2.5rem] shadow-2xl border-[8px] border-slate-900 relative overflow-hidden flex flex-col items-center p-6">
+                <div className="w-12 h-1 bg-slate-800 rounded-full mb-8 mt-2"></div>
+                
+                <div className="flex-1 flex flex-col items-center justify-center w-full">
+                  {previewLogo ? (
+                    <img src={previewLogo} alt="Logo" className="w-24 h-24 object-contain mb-8" />
+                  ) : (
+                    <div className="w-24 h-24 bg-slate-100 rounded-3xl flex items-center justify-center text-slate-300 mb-8">
+                      <Fuel className="w-12 h-12" />
+                    </div>
+                  )}
+                  
+                  <div className="w-full space-y-3">
+                    <div className="h-10 bg-slate-50 rounded-xl border border-slate-100"></div>
+                    <div className="h-10 bg-slate-50 rounded-xl border border-slate-100"></div>
+                    <div className="h-10 bg-indigo-600 rounded-xl"></div>
+                  </div>
+                </div>
+
+                <div className="mt-auto mb-4 text-[8px] text-slate-300 font-bold">نظام إدارة المحطات الذكي</div>
+              </div>
+
+              {editingStation.slug && (
+                <div className="mt-8 w-full">
+                  <button 
+                    onClick={() => copyStationLink(editingStation.slug)}
+                    className="w-full flex items-center justify-center gap-2 p-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:border-indigo-600 hover:text-indigo-600 transition-all group"
+                  >
+                    <Copy className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                    نسخ رابط الدخول المباشر
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+      {showRepayModal && (
+        <div className="fixed inset-0 bg-slate-900/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-xl font-black text-slate-800">تسديد مبلغ من القرض</h3>
+              <button onClick={() => setShowRepayModal(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                <X className="w-6 h-6 text-slate-400" />
+              </button>
+            </div>
+            <form onSubmit={async (e: any) => {
+              e.preventDefault();
+              const formData = new FormData(e.target);
+              try {
+                await api.repayLoan(showRepayModal.id, {
+                  amount: parseFloat(formData.get('amount') as string),
+                  repayment_date: formData.get('repayment_date'),
+                });
+                alert('تم تسجيل التسديد بنجاح');
+                setShowRepayModal(null);
+                loadDashboardData();
+              } catch (err) {
+                alert('خطأ في التسديد');
+              }
+            }} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">الموظف</label>
+                <div className="p-3 bg-slate-50 rounded-xl font-bold text-slate-600">{showRepayModal.employee_name}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">مبلغ التسديد</label>
+                <input name="amount" type="number" required max={showRepayModal.amount - showRepayModal.total_paid} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                <p className="text-[10px] text-slate-400 mt-1 font-bold">المبلغ المتبقي: {(showRepayModal.amount - showRepayModal.total_paid).toLocaleString()} د.ع</p>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ التسديد</label>
+                <input name="repayment_date" type="date" defaultValue={format(new Date(), 'yyyy-MM-dd')} required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <button className="w-full bg-indigo-600 text-white p-4 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
+                تأكيد التسديد
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-slate-900/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-black text-slate-800">سجل تسديدات القرض</h3>
+                <p className="text-sm text-slate-500 font-bold">الموظف: {showHistoryModal.employee_name}</p>
+              </div>
+              <button onClick={() => setShowHistoryModal(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                <X className="w-6 h-6 text-slate-400" />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-right">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="pb-4 font-bold text-slate-500 text-sm">التاريخ</th>
+                    <th className="pb-4 font-bold text-slate-500 text-sm">المبلغ المسدد</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {loanHistory.map((h: any) => (
+                    <tr key={h.id}>
+                      <td className="py-4 text-slate-600 font-bold">{format(new Date(h.repayment_date), 'yyyy-MM-dd')}</td>
+                      <td className="py-4 text-emerald-600 font-bold">{h.amount.toLocaleString()} د.ع</td>
+                    </tr>
+                  ))}
+                  {loanHistory.length === 0 && (
+                    <tr>
+                      <td colSpan={2} className="py-8 text-center text-slate-400 font-medium">لا توجد تسديدات مسجلة</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+              <span className="text-slate-500 font-bold">إجمالي المسدد:</span>
+              <span className="text-xl font-black text-emerald-600">{showHistoryModal.total_paid.toLocaleString()} د.ع</span>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

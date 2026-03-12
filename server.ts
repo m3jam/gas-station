@@ -9,6 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { dirname } from 'path';
 import Stripe from "stripe";
+import webpush from 'web-push';
 
 // Handle BigInt serialization for JSON
 (BigInt.prototype as any).toJSON = function () {
@@ -85,6 +86,13 @@ const PLANS = {
   Premium: process.env.STRIPE_PRICE_ID_PREMIUM,
 };
 
+// --- Web Push Initialization ---
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "BM27JQ2WqUCQULvJj030BNR3H2yLlzNt5lm0MCUwJcxUxmiHz781H98L-C-yAeE7c2GMMRG6tvMX3-InlQIIiJM";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "eEm6MDKjOAk6oiR68g-lW54xt3mQu5WcanXSD3KuJas";
+const VAPID_EMAIL = process.env.VAPID_EMAIL || "mailto:info.mohamed35@gmail.com";
+
+webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
 // --- Database Initialization ---
 const initDb = async () => {
   await db.query(`
@@ -101,9 +109,51 @@ const initDb = async () => {
       owner_password_plain TEXT,
       stripe_customer_id TEXT,
       stripe_subscription_id TEXT,
+      slug TEXT UNIQUE,
+      logo_url TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Add columns if they don't exist (for existing databases)
+  try { await db.query("ALTER TABLE stations ADD COLUMN slug TEXT"); } catch(e) {}
+  try { await db.query("ALTER TABLE stations ADD COLUMN logo_url TEXT"); } catch(e) {}
+  try { await db.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_stations_slug ON stations(slug)"); } catch(e) {}
+  
+  // Notification settings for stations
+  try { await db.query("ALTER TABLE stations ADD COLUMN notifications_enabled INTEGER DEFAULT 1"); } catch(e) {}
+  try { await db.query("ALTER TABLE stations ADD COLUMN notify_expenses INTEGER DEFAULT 1"); } catch(e) {}
+  try { await db.query("ALTER TABLE stations ADD COLUMN notify_withdrawals INTEGER DEFAULT 1"); } catch(e) {}
+  try { await db.query("ALTER TABLE stations ADD COLUMN notify_commercial_sales INTEGER DEFAULT 1"); } catch(e) {}
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      station_id INTEGER NOT NULL REFERENCES stations(id),
+      subscription_json TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS loans (
+      id SERIAL PRIMARY KEY,
+      station_id INTEGER NOT NULL REFERENCES stations(id),
+      employee_name TEXT NOT NULL,
+      amount DOUBLE PRECISION NOT NULL,
+      loan_date DATE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS loan_repayments (
+      id SERIAL PRIMARY KEY,
+      loan_id INTEGER NOT NULL REFERENCES loans(id) ON DELETE CASCADE,
+      amount DOUBLE PRECISION NOT NULL,
+      repayment_date DATE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       station_id INTEGER REFERENCES stations(id),
@@ -251,6 +301,50 @@ const checkSubscription = async (req: any, res: any, next: any) => {
   }
   
   next();
+};
+
+// --- Push Notification Helper ---
+const sendPushNotification = async (stationId: number, title: string, body: string, type: 'expense' | 'withdrawal' | 'commercial_sale') => {
+  try {
+    // 1. Check if notifications are enabled for this station and type
+    const stationRes = await db.query(`
+      SELECT notifications_enabled, notify_expenses, notify_withdrawals, notify_commercial_sales 
+      FROM stations WHERE id = $1
+    `, [stationId]);
+    
+    const station = stationRes.rows[0];
+    if (!station || !station.notifications_enabled) return;
+    
+    if (type === 'expense' && !station.notify_expenses) return;
+    if (type === 'withdrawal' && !station.notify_withdrawals) return;
+    if (type === 'commercial_sale' && !station.notify_commercial_sales) return;
+
+    // 2. Get all subscriptions for the owner of this station
+    // We only notify the owner
+    const subscriptionsRes = await db.query(`
+      SELECT ps.subscription_json, ps.id
+      FROM push_subscriptions ps
+      JOIN users u ON ps.user_id = u.id
+      WHERE ps.station_id = $1 AND u.role = 'Owner'
+    `, [stationId]);
+
+    const payload = JSON.stringify({ title, body });
+
+    for (const subRow of subscriptionsRes.rows) {
+      try {
+        const subscription = JSON.parse(subRow.subscription_json);
+        await webpush.sendNotification(subscription, payload);
+      } catch (err: any) {
+        console.error("Push delivery failed for subscription ID:", subRow.id, err.statusCode);
+        // If subscription is invalid/expired, remove it
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          await db.query("DELETE FROM push_subscriptions WHERE id = $1", [subRow.id]);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("sendPushNotification error:", err);
+  }
 };
 
 // --- Routes ---
@@ -425,6 +519,37 @@ app.post("/api/stations/:id/toggle", authenticateToken, async (req: any, res) =>
   res.json({ success: true });
 });
 
+app.put("/api/stations/:id", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'SuperAdmin') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  const { name, address, phone, slug, logo_url } = req.body;
+  
+  try {
+    await db.query(
+      "UPDATE stations SET name = $1, address = $2, phone = $3, slug = $4, logo_url = $5 WHERE id = $6",
+      [name, address, phone, slug, logo_url, id]
+    );
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("Error updating station:", err);
+    res.status(400).json({ error: err.message || "Failed to update station" });
+  }
+});
+
+// Public route to get station info by slug
+app.get("/api/public/stations/:slug", async (req, res) => {
+  const { slug } = req.params;
+  try {
+    const result = await db.query("SELECT name, logo_url, slug FROM stations WHERE slug = $1", [slug]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Station not found" });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Products (Tenant Isolated)
 app.get("/api/products", authenticateToken, checkSubscription, async (req: any, res) => {
   const result = await db.query("SELECT * FROM products WHERE station_id = $1", [req.user.station_id]);
@@ -498,10 +623,19 @@ app.post("/api/meter-readings", authenticateToken, checkSubscription, async (req
   try {
     await client.query('BEGIN');
     
-    const pumpRes = await client.query("SELECT * FROM pumps WHERE id = $1", [pump_id]);
+    const pumpRes = await client.query("SELECT * FROM pumps WHERE id = $1 AND station_id = $2", [pump_id, req.user.station_id]);
     const pump = pumpRes.rows[0];
-    const productRes = await client.query("SELECT * FROM products WHERE id = $1", [pump.product_id]);
+    if (!pump) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: "Pump not found" });
+    }
+
+    const productRes = await client.query("SELECT * FROM products WHERE id = $1 AND station_id = $2", [pump.product_id, req.user.station_id]);
     const product = productRes.rows[0];
+    if (!product) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: "Product not found" });
+    }
     
     const liters_sold_1 = closing_meter_1 - opening_meter_1;
     const liters_sold_2 = closing_meter_2 - opening_meter_2;
@@ -570,6 +704,13 @@ app.post("/api/inventory-transactions", authenticateToken, checkSubscription, as
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+    // Check if product exists
+    const productCheck = await client.query("SELECT id FROM products WHERE id = $1 AND station_id = $2", [product_id, req.user.station_id]);
+    if (!productCheck.rows || productCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: "Product not found" });
+    }
+
     // Record transaction
     await client.query(
       "INSERT INTO inventory_transactions (station_id, product_id, transaction_date, type, quantity, unit_price, supplier_name) VALUES ($1, $2, $3, 'IN', $4, $5, $6)",
@@ -709,10 +850,14 @@ app.get("/api/reports", authenticateToken, checkSubscription, async (req: any, r
     dateFilter = "AND m.reading_date = $1";
     queryParams.push(date);
   } else if (type === 'monthly') {
-    dateFilter = "AND TO_CHAR(m.reading_date, 'YYYY-MM') = $1";
+    dateFilter = usePostgres 
+      ? "AND TO_CHAR(m.reading_date, 'YYYY-MM') = $1" 
+      : "AND strftime('%Y-%m', m.reading_date) = $1";
     queryParams.push(date);
   } else if (type === 'yearly') {
-    dateFilter = "AND TO_CHAR(m.reading_date, 'YYYY') = $1";
+    dateFilter = usePostgres 
+      ? "AND TO_CHAR(m.reading_date, 'YYYY') = $1" 
+      : "AND strftime('%Y', m.reading_date) = $1";
     queryParams.push(date);
   }
   
@@ -738,10 +883,14 @@ app.get("/api/reports", authenticateToken, checkSubscription, async (req: any, r
     expenseFilter = "AND expense_date = $2";
     expenseParams.push(date);
   } else if (type === 'monthly') {
-    expenseFilter = "AND TO_CHAR(expense_date, 'YYYY-MM') = $2";
+    expenseFilter = usePostgres 
+      ? "AND TO_CHAR(expense_date, 'YYYY-MM') = $2" 
+      : "AND strftime('%Y-%m', expense_date) = $2";
     expenseParams.push(date);
   } else if (type === 'yearly') {
-    expenseFilter = "AND TO_CHAR(expense_date, 'YYYY') = $2";
+    expenseFilter = usePostgres 
+      ? "AND TO_CHAR(expense_date, 'YYYY') = $2" 
+      : "AND strftime('%Y', expense_date) = $2";
     expenseParams.push(date);
   }
 
@@ -766,6 +915,15 @@ app.post("/api/expenses", authenticateToken, checkSubscription, async (req: any,
   const { expense_date, category, amount, notes } = req.body;
   await db.query("INSERT INTO expenses (station_id, expense_date, category, amount, notes) VALUES ($1, $2, $3, $4, $5)",
     [req.user.station_id, expense_date, category, amount, notes]);
+  
+  // Trigger notification
+  sendPushNotification(
+    req.user.station_id, 
+    "مصروف جديد", 
+    `تمت إضافة مصروف: ${category}\nالمبلغ: ${amount.toLocaleString()} د.ع\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
+    'expense'
+  );
+
   res.json({ success: true });
 });
 
@@ -788,18 +946,29 @@ app.post("/api/withdrawals", authenticateToken, checkSubscription, async (req: a
     await client.query("INSERT INTO withdrawals (station_id, withdrawal_date, quantity, reason) VALUES ($1, $2, $3, $4)",
       [req.user.station_id, withdrawal_date, quantity, reason]);
     
-    // Deduct from "كاز السيارات" stock
-    // We search for a product named 'كاز السيارات' or 'كاز'
+    // Deduct from fuel stock
     const productRes = await client.query("SELECT id FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", [req.user.station_id]);
-    if (productRes.rows[0]) {
-      await client.query("UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2", [quantity, productRes.rows[0].id]);
+    if (!productRes.rows || !productRes.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: "Fuel product (Gas/Diesel) not found for this station. Please ensure a product with 'كاز' or 'ديزل' in its name exists." });
+    }
+
+    await client.query("UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2", [quantity, productRes.rows[0].id]);
       
       // Record inventory transaction
       await client.query("INSERT INTO inventory_transactions (station_id, product_id, transaction_date, type, quantity) VALUES ($1, $2, $3, 'OUT', $4)",
         [req.user.station_id, productRes.rows[0].id, withdrawal_date, quantity]);
-    }
 
     await client.query('COMMIT');
+
+    // Trigger notification
+    sendPushNotification(
+      req.user.station_id, 
+      "سحب وقود جديد", 
+      `تم تسجيل سحب: ${quantity.toLocaleString()} لتر\nالسبب: ${reason || 'غير محدد'}\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
+      'withdrawal'
+    );
+
     res.json({ success: true });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -817,10 +986,10 @@ app.delete("/api/withdrawals/:id", authenticateToken, checkSubscription, async (
     await client.query('BEGIN');
     const resW = await client.query("SELECT * FROM withdrawals WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
     const withdrawal = resW.rows[0];
+    // Revert stock
     if (withdrawal) {
-      // Revert stock
       const productRes = await client.query("SELECT id FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", [req.user.station_id]);
-      if (productRes.rows[0]) {
+      if (productRes.rows && productRes.rows[0]) {
         await client.query("UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2", [withdrawal.quantity, productRes.rows[0].id]);
       }
       await client.query("DELETE FROM withdrawals WHERE id = $1", [id]);
@@ -844,18 +1013,175 @@ app.get("/api/commercial-sales", authenticateToken, checkSubscription, async (re
 });
 
 app.post("/api/commercial-sales", authenticateToken, checkSubscription, async (req: any, res) => {
-  const { sale_date, quantity, commercial_price, default_price } = req.body;
-  const difference = (commercial_price - default_price) * quantity;
+  const { sale_date, quantity, commercial_price } = req.body;
   
-  await db.query("INSERT INTO commercial_sales (station_id, sale_date, quantity, commercial_price, default_price, difference) VALUES ($1, $2, $3, $4, $5, $6)",
-    [req.user.station_id, sale_date, quantity, commercial_price, default_price, difference]);
-  
-  res.json({ success: true });
+  try {
+    // Fetch the default price of "كاز السيارات" or similar
+    const productRes = await db.query(
+      "SELECT sell_price FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", 
+      [req.user.station_id]
+    );
+    
+    if (!productRes.rows || !productRes.rows[0]) {
+      return res.status(404).json({ error: "Fuel product (Gas/Diesel) not found for this station. Please ensure a product with 'كاز' or 'ديزل' in its name exists." });
+    }
+    
+    const default_price = productRes.rows[0].sell_price;
+    const difference = (commercial_price - default_price) * quantity;
+    
+    await db.query(
+      "INSERT INTO commercial_sales (station_id, sale_date, quantity, commercial_price, default_price, difference) VALUES ($1, $2, $3, $4, $5, $6)",
+      [req.user.station_id, sale_date, quantity, commercial_price, default_price, difference]
+    );
+    
+    // Trigger notification
+    sendPushNotification(
+      req.user.station_id, 
+      "بيع تجاري جديد", 
+      `تم تسجيل بيع تجاري: ${quantity.toLocaleString()} لتر\nالسعر: ${commercial_price.toLocaleString()} د.ع\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
+      'commercial_sale'
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Commercial sale error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.delete("/api/commercial-sales/:id", authenticateToken, checkSubscription, async (req: any, res) => {
   const { id } = req.params;
   await db.query("DELETE FROM commercial_sales WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
+  res.json({ success: true });
+});
+
+// --- Loans ---
+
+app.get("/api/loans", authenticateToken, checkSubscription, async (req: any, res) => {
+  if (req.user.role === 'Employee') return res.status(403).json({ error: "Access denied" });
+  
+  // Get loans with total paid amount
+  const result = await db.query(`
+    SELECT l.*, 
+           COALESCE(SUM(lr.amount), 0) as total_paid
+    FROM loans l
+    LEFT JOIN loan_repayments lr ON l.id = lr.loan_id
+    WHERE l.station_id = $1
+    GROUP BY l.id
+    ORDER BY l.loan_date DESC
+  `, [req.user.station_id]);
+  
+  res.json(result.rows);
+});
+
+app.post("/api/loans", authenticateToken, checkSubscription, async (req: any, res) => {
+  if (req.user.role === 'Employee') return res.status(403).json({ error: "Access denied" });
+  const { employee_name, amount, loan_date } = req.body;
+  
+  await db.query("INSERT INTO loans (station_id, employee_name, amount, loan_date) VALUES ($1, $2, $3, $4)",
+    [req.user.station_id, employee_name, amount, loan_date]);
+    
+  res.json({ success: true });
+});
+
+app.delete("/api/loans/:id", authenticateToken, checkSubscription, async (req: any, res) => {
+  if (req.user.role === 'Employee') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  
+  await db.query("DELETE FROM loans WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
+  res.json({ success: true });
+});
+
+app.post("/api/loans/:id/repay", authenticateToken, checkSubscription, async (req: any, res) => {
+  if (req.user.role === 'Employee') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  const { amount, repayment_date } = req.body;
+  
+  // Verify loan belongs to station
+  const loanCheck = await db.query("SELECT id FROM loans WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
+  if (loanCheck.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
+
+  await db.query("INSERT INTO loan_repayments (loan_id, amount, repayment_date) VALUES ($1, $2, $3)",
+    [id, amount, repayment_date]);
+    
+  res.json({ success: true });
+});
+
+app.get("/api/loans/:id/history", authenticateToken, checkSubscription, async (req: any, res) => {
+  if (req.user.role === 'Employee') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  
+  // Verify loan belongs to station
+  const loanCheck = await db.query("SELECT id FROM loans WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
+  if (loanCheck.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
+
+  const result = await db.query("SELECT * FROM loan_repayments WHERE loan_id = $1 ORDER BY repayment_date DESC", [id]);
+  res.json(result.rows);
+});
+
+// --- Notifications ---
+
+app.get("/api/notifications/vapid-public-key", authenticateToken, (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/notifications/subscribe", authenticateToken, async (req: any, res) => {
+  const { subscription } = req.body;
+  if (!subscription) return res.status(400).json({ error: "Missing subscription" });
+
+  const subscriptionJson = JSON.stringify(subscription);
+  
+  // Check if subscription already exists for this user
+  const existing = await db.query("SELECT id FROM push_subscriptions WHERE user_id = $1 AND subscription_json = $2", 
+    [req.user.id, subscriptionJson]);
+    
+  if (existing.rows.length === 0) {
+    await db.query("INSERT INTO push_subscriptions (user_id, station_id, subscription_json) VALUES ($1, $2, $3)",
+      [req.user.id, req.user.station_id, subscriptionJson]);
+  }
+  
+  res.json({ success: true });
+});
+
+app.post("/api/notifications/unsubscribe", authenticateToken, async (req: any, res) => {
+  const { subscription } = req.body;
+  if (!subscription) return res.status(400).json({ error: "Missing subscription" });
+
+  const subscriptionJson = JSON.stringify(subscription);
+  await db.query("DELETE FROM push_subscriptions WHERE user_id = $1 AND subscription_json = $2",
+    [req.user.id, subscriptionJson]);
+    
+  res.json({ success: true });
+});
+
+app.put("/api/station-info/notifications", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'Owner') return res.status(403).json({ error: "Access denied" });
+  const { notifications_enabled } = req.body;
+  
+  await db.query("UPDATE stations SET notifications_enabled = $1 WHERE id = $2", 
+    [notifications_enabled ? 1 : 0, req.user.station_id]);
+    
+  res.json({ success: true });
+});
+
+// Update notification settings (SuperAdmin)
+app.put("/api/stations/:id/notification-settings", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'SuperAdmin') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  const { notifications_enabled, notify_expenses, notify_withdrawals, notify_commercial_sales } = req.body;
+  
+  await db.query(`
+    UPDATE stations 
+    SET notifications_enabled = $1, notify_expenses = $2, notify_withdrawals = $3, notify_commercial_sales = $4
+    WHERE id = $5
+  `, [
+    notifications_enabled ? 1 : 0, 
+    notify_expenses ? 1 : 0, 
+    notify_withdrawals ? 1 : 0, 
+    notify_commercial_sales ? 1 : 0, 
+    id
+  ]);
+  
   res.json({ success: true });
 });
 
