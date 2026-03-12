@@ -6,6 +6,7 @@ import {
   LogOut, 
   PlusCircle, 
   TrendingUp, 
+  TrendingDown,
   Wallet, 
   AlertCircle,
   ChevronLeft,
@@ -847,13 +848,13 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard 
                   title="إجمالي المبيعات" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_sales || 0), 0) - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity * (stats.products.find((p: any) => p.name.includes('كاز'))?.sale_price || 0)), 0) || 0)).toLocaleString()} د.ع`}
+                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_sales || 0), 0) - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.amount || 0), 0) || 0)).toLocaleString()} د.ع`}
                   icon={TrendingUp}
                   color="bg-indigo-500"
                 />
                 <StatCard 
                   title="صافي الربح" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - stats.totalExpenses - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity * (stats.products.find((p: any) => p.name.includes('كاز'))?.sale_price || 0)), 0) || 0)).toLocaleString()} د.ع`}
+                  value={`${(stats.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - stats.totalExpenses - (stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.amount || 0), 0) || 0)).toLocaleString()} د.ع`}
                   icon={TrendingUp}
                   color="bg-emerald-500"
                 />
@@ -983,8 +984,8 @@ export default function App() {
                     {stats.withdrawals?.map((w: any, idx: number) => (
                       <div key={idx} className="flex justify-between items-center p-3 border-b border-slate-50 last:border-0">
                         <div className="flex flex-col">
-                          <span className="text-slate-800 font-bold">{w.quantity} لتر</span>
-                          <span className="text-xs text-slate-400">{w.reason}</span>
+                          <span className="text-rose-600 font-bold">{(w.amount || 0).toLocaleString()} د.ع</span>
+                          <span className="text-xs text-slate-400">{w.reason} {w.quantity > 0 ? `(${w.quantity} لتر)` : ''}</span>
                         </div>
                         <span className="text-xs text-slate-400">{format(new Date(w.withdrawal_date), 'HH:mm')}</span>
                       </div>
@@ -995,7 +996,7 @@ export default function App() {
                   </div>
                   <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center">
                     <span className="text-slate-600 font-bold">إجمالي السحوبات</span>
-                    <span className="text-rose-600 font-black">{(stats.withdrawals?.reduce((acc: any, w: any) => acc + w.quantity, 0) || 0).toLocaleString()} لتر</span>
+                    <span className="text-rose-600 font-black">{(stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.amount || 0), 0) || 0).toLocaleString()} د.ع</span>
                   </div>
                 </Card>
               </div>
@@ -1028,14 +1029,15 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Withdrawals Section */}
                 <div className="space-y-6">
-                  <Card title="تسجيل سحب (كاز السيارات)">
+                  <Card title="تسجيل سحب">
                     <form onSubmit={async (e: any) => {
                       e.preventDefault();
                       const formData = new FormData(e.target);
                       try {
                         await api.saveWithdrawal({
                           withdrawal_date: withdrawalsCommercialDate,
-                          quantity: parseFloat(formData.get('quantity') as string),
+                          amount: parseFloat(formData.get('amount') as string),
+                          quantity: parseFloat(formData.get('quantity') as string || '0'),
                           reason: formData.get('reason') as string
                         });
                         alert('تم حفظ السحب بنجاح');
@@ -1046,16 +1048,28 @@ export default function App() {
                         alert('خطأ في حفظ السحب');
                       }
                     }} className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-2">الكمية (لتر)</label>
-                        <input 
-                          name="quantity"
-                          type="number" 
-                          step="0.01"
-                          required
-                          className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                          placeholder="0"
-                        />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ (دينار)</label>
+                          <input 
+                            name="amount"
+                            type="number" 
+                            step="1"
+                            required
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="0"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-2">الكمية (اختياري - لتر)</label>
+                          <input 
+                            name="quantity"
+                            type="number" 
+                            step="0.01"
+                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="0"
+                          />
+                        </div>
                       </div>
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">السبب</label>
@@ -1077,6 +1091,7 @@ export default function App() {
                       <table className="w-full text-right">
                         <thead>
                           <tr className="border-b border-slate-100">
+                            <th className="py-3 px-4 text-slate-400 font-bold text-sm">المبلغ</th>
                             <th className="py-3 px-4 text-slate-400 font-bold text-sm">الكمية</th>
                             <th className="py-3 px-4 text-slate-400 font-bold text-sm">السبب</th>
                             <th className="py-3 px-4 text-slate-400 font-bold text-sm">الإجراء</th>
@@ -1085,7 +1100,8 @@ export default function App() {
                         <tbody>
                           {withdrawalsData.map((w) => (
                             <tr key={w.id} className="border-b border-slate-50 last:border-0">
-                              <td className="py-3 px-4 font-bold text-slate-700">{w.quantity} لتر</td>
+                              <td className="py-3 px-4 font-bold text-rose-600">{(w.amount || 0).toLocaleString()} د.ع</td>
+                              <td className="py-3 px-4 text-slate-500 text-sm">{w.quantity || 0} لتر</td>
                               <td className="py-3 px-4 text-slate-500 text-sm">{w.reason}</td>
                               <td className="py-3 px-4">
                                 <button 
@@ -1913,8 +1929,14 @@ export default function App() {
                       color="bg-rose-500"
                     />
                     <StatCard 
+                      title="إجمالي السحوبات" 
+                      value={`${(reportsData.totalWithdrawals || 0).toLocaleString()} د.ع`}
+                      icon={TrendingDown}
+                      color="bg-orange-500"
+                    />
+                    <StatCard 
                       title="صافي الدخل" 
-                      value={`${(reportsData.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - reportsData.totalExpenses).toLocaleString()} د.ع`}
+                      value={`${(reportsData.products.reduce((acc: any, p: any) => acc + (p.total_profit || 0), 0) - reportsData.totalExpenses - (reportsData.totalWithdrawals || 0)).toLocaleString()} د.ع`}
                       icon={TrendingUp}
                       color="bg-amber-500"
                     />
@@ -2066,11 +2088,35 @@ export default function App() {
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-2">الرابط الخاص (slug)</label>
+                          <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center justify-between">
+                            <span>الرابط الخاص (slug)</span>
+                            <button 
+                              type="button" 
+                              onClick={(e) => {
+                                const form = e.currentTarget.closest('form');
+                                const input = form?.querySelector('input[name="slug"]') as HTMLInputElement;
+                                if (input) input.value = '';
+                              }}
+                              className="text-rose-600 text-[10px] font-bold hover:underline"
+                            >
+                              حذف
+                            </button>
+                          </label>
                           <input name="slug" type="text" placeholder="مثال: محطة-الامل" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
                         </div>
                         <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-2">لوجو المحطة (PNG)</label>
+                          <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center justify-between">
+                            <span>لوجو المحطة (PNG)</span>
+                            {newStationLogo && (
+                              <button 
+                                type="button" 
+                                onClick={() => setNewStationLogo('')}
+                                className="text-rose-600 text-[10px] font-bold hover:underline"
+                              >
+                                حذف
+                              </button>
+                            )}
+                          </label>
                           <input type="file" accept="image/png" onChange={(e) => handleLogoUpload(e, setNewStationLogo)} className="w-full p-2 text-xs" />
                           {newStationLogo && (
                             <div className="mt-2 p-2 border border-slate-100 rounded-xl bg-slate-50 flex items-center justify-center">
@@ -2447,7 +2493,7 @@ export default function App() {
                     address: data.address,
                     phone: data.phone,
                     slug: data.slug,
-                    logo_url: previewLogo || editingStation.logo_url
+                    logo_url: previewLogo || null
                   });
                   
                   // Update notification settings separately
@@ -2471,7 +2517,20 @@ export default function App() {
                     <input name="name" type="text" defaultValue={editingStation.name} required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">الرابط الخاص (slug)</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center justify-between">
+                      <span>الرابط الخاص (slug)</span>
+                      <button 
+                        type="button" 
+                        onClick={(e) => {
+                          const form = e.currentTarget.closest('form');
+                          const input = form?.querySelector('input[name="slug"]') as HTMLInputElement;
+                          if (input) input.value = '';
+                        }}
+                        className="text-rose-600 text-[10px] font-bold hover:underline"
+                      >
+                        حذف الرابط
+                      </button>
+                    </label>
                     <input name="slug" type="text" defaultValue={editingStation.slug} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" />
                   </div>
                 </div>

@@ -124,6 +124,8 @@ const initDb = async () => {
   try { await db.query("ALTER TABLE stations ADD COLUMN notifications_enabled INTEGER DEFAULT 1"); } catch(e) {}
   try { await db.query("ALTER TABLE stations ADD COLUMN notify_expenses INTEGER DEFAULT 1"); } catch(e) {}
   try { await db.query("ALTER TABLE stations ADD COLUMN notify_withdrawals INTEGER DEFAULT 1"); } catch(e) {}
+  try { await db.query("ALTER TABLE withdrawals ADD COLUMN amount DOUBLE PRECISION DEFAULT 0"); } catch(e) {}
+  try { await db.query("ALTER TABLE withdrawals ALTER COLUMN quantity DROP NOT NULL"); } catch(e) {}
   try { await db.query("ALTER TABLE stations ADD COLUMN notify_commercial_sales INTEGER DEFAULT 1"); } catch(e) {}
 
   await db.query(`
@@ -225,7 +227,8 @@ const initDb = async () => {
       id SERIAL PRIMARY KEY,
       station_id INTEGER NOT NULL REFERENCES stations(id),
       withdrawal_date DATE NOT NULL,
-      quantity DOUBLE PRECISION NOT NULL,
+      quantity DOUBLE PRECISION DEFAULT 0,
+      amount DOUBLE PRECISION DEFAULT 0,
       reason TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -529,6 +532,7 @@ app.put("/api/stations/:id", authenticateToken, async (req: any, res) => {
   let { name, address, phone, slug, logo_url } = req.body;
   
   if (slug === "") slug = null;
+  if (logo_url === "") logo_url = null;
   
   try {
     const stationId = Number(id);
@@ -916,9 +920,30 @@ app.get("/api/reports", authenticateToken, checkSubscription, async (req: any, r
   const totalExpensesRes = await db.query(`SELECT SUM(amount) as total FROM expenses WHERE station_id = $1 ${expenseFilter}`,
     expenseParams);
 
+  let withdrawalParams: any[] = [req.user.station_id];
+  let withdrawalFilter = "";
+  if (type === 'daily') {
+    withdrawalFilter = "AND withdrawal_date = $2";
+    withdrawalParams.push(date);
+  } else if (type === 'monthly') {
+    withdrawalFilter = usePostgres 
+      ? "AND TO_CHAR(withdrawal_date, 'YYYY-MM') = $2" 
+      : "AND strftime('%Y-%m', withdrawal_date) = $2";
+    withdrawalParams.push(date);
+  } else if (type === 'yearly') {
+    withdrawalFilter = usePostgres 
+      ? "AND TO_CHAR(withdrawal_date, 'YYYY') = $2" 
+      : "AND strftime('%Y', withdrawal_date) = $2";
+    withdrawalParams.push(date);
+  }
+
+  const totalWithdrawalsRes = await db.query(`SELECT SUM(amount) as total FROM withdrawals WHERE station_id = $1 ${withdrawalFilter}`,
+    withdrawalParams);
+
   res.json({
     products: productStatsRes.rows,
-    totalExpenses: totalExpensesRes.rows[0]?.total || 0
+    totalExpenses: totalExpensesRes.rows[0]?.total || 0,
+    totalWithdrawals: totalWithdrawalsRes.rows[0]?.total || 0
   });
 });
 
@@ -955,36 +980,26 @@ app.get("/api/withdrawals", authenticateToken, checkSubscription, async (req: an
 });
 
 app.post("/api/withdrawals", authenticateToken, checkSubscription, async (req: any, res) => {
-  const { withdrawal_date, quantity, reason } = req.body;
+  const { withdrawal_date, quantity, amount, reason } = req.body;
   
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     
     // Insert withdrawal
-    await client.query("INSERT INTO withdrawals (station_id, withdrawal_date, quantity, reason) VALUES ($1, $2, $3, $4)",
-      [req.user.station_id, withdrawal_date, quantity, reason]);
+    await client.query("INSERT INTO withdrawals (station_id, withdrawal_date, quantity, amount, reason) VALUES ($1, $2, $3, $4, $5)",
+      [req.user.station_id, withdrawal_date, quantity || 0, amount || 0, reason]);
     
-    // Deduct from fuel stock
-    const productRes = await client.query("SELECT id FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", [req.user.station_id]);
-    if (!productRes.rows || !productRes.rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: "Fuel product (Gas/Diesel) not found for this station. Please ensure a product with 'كاز' or 'ديزل' in its name exists." });
-    }
-
-    await client.query("UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2", [quantity, productRes.rows[0].id]);
-      
-      // Record inventory transaction
-      await client.query("INSERT INTO inventory_transactions (station_id, product_id, transaction_date, type, quantity) VALUES ($1, $2, $3, 'OUT', $4)",
-        [req.user.station_id, productRes.rows[0].id, withdrawal_date, quantity]);
+    // NO LONGER deducting from fuel stock as per user request
+    // "السحب اريده يخصم من الارباح و المبيعات بالدينار وليس من مخزون كاز السيارات"
 
     await client.query('COMMIT');
 
     // Trigger notification
     sendPushNotification(
       req.user.station_id, 
-      "سحب وقود جديد", 
-      `تم تسجيل سحب: ${quantity.toLocaleString()} لتر\nالسبب: ${reason || 'غير محدد'}\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
+      "سحب جديد", 
+      `تم تسجيل سحب: ${(amount || 0).toLocaleString()} د.ع\nالسبب: ${reason || 'غير محدد'}\nبواسطة: ${req.user.username}\nالوقت: ${new Date().toLocaleTimeString('ar-IQ')}`,
       'withdrawal'
     );
 
@@ -1003,16 +1018,8 @@ app.delete("/api/withdrawals/:id", authenticateToken, checkSubscription, async (
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    const resW = await client.query("SELECT * FROM withdrawals WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
-    const withdrawal = resW.rows[0];
-    // Revert stock
-    if (withdrawal) {
-      const productRes = await client.query("SELECT id FROM products WHERE station_id = $1 AND (name LIKE '%كاز%' OR name LIKE '%ديزل%') LIMIT 1", [req.user.station_id]);
-      if (productRes.rows && productRes.rows[0]) {
-        await client.query("UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2", [withdrawal.quantity, productRes.rows[0].id]);
-      }
-      await client.query("DELETE FROM withdrawals WHERE id = $1", [id]);
-    }
+    // Just delete the withdrawal, NO stock reversion needed anymore
+    await client.query("DELETE FROM withdrawals WHERE id = $1 AND station_id = $2", [id, req.user.station_id]);
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
