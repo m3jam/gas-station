@@ -232,10 +232,10 @@ export default function App() {
   useEffect(() => {
     if (user) {
       const allowedTabs: Record<string, string[]> = {
-        'Writer': ['meter-readings', 'inventory'],
-        'Accountant': ['withdrawals', 'expenses', 'loans'],
-        'Owner': ['dashboard', 'meter-readings', 'inventory', 'withdrawals', 'expenses', 'loans', 'reports', 'employees', 'settings', 'subscription'],
-        'Employee': ['dashboard', 'meter-readings', 'inventory', 'withdrawals', 'expenses', 'loans'],
+        'Writer': ['readings', 'inventory'],
+        'Accountant': ['withdrawals_commercial', 'expenses', 'loans'],
+        'Owner': ['dashboard', 'readings', 'inventory', 'withdrawals_commercial', 'expenses', 'loans', 'reports', 'setup', 'settings', 'subscription', 'support'],
+        'Employee': ['dashboard', 'readings', 'inventory', 'withdrawals_commercial', 'expenses', 'loans', 'setup', 'reports', 'support'],
         'SuperAdmin': ['admin', 'support']
       };
 
@@ -250,6 +250,7 @@ export default function App() {
     localStorage.setItem('activeTab', activeTab);
     setSelectedProductId(null);
     if (activeTab === 'settings' && user?.role === 'Owner') {
+      loadStationData();
       loadStationAccounts();
     }
   }, [activeTab, user]);
@@ -2617,7 +2618,8 @@ export default function App() {
                   await api.updateStation(editingStation.id, {
                     name: data.name,
                     address: data.address,
-                    phone: data.phone
+                    phone: data.phone,
+                    roles_enabled: data.roles_enabled === 'on'
                   });
                   
                   // Update notification settings separately
