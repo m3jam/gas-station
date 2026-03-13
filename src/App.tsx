@@ -1001,48 +1001,6 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Charts */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card title="مبيعات المنتجات اليوم (دينار)">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stats.products}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }} />
-                        <Tooltip 
-                          contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                          cursor={{ fill: '#f8fafc' }}
-                        />
-                        <Bar dataKey="total_sales" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Card>
-                <Card title="توزيع الأرباح">
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={stats.products}
-                          dataKey="total_profit"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={5}
-                        >
-                          {stats.products.map((entry: any, index: number) => (
-                            <Cell key={`cell-${index}`} fill={['#4f46e5', '#10b981', '#f59e0b', '#ef4444'][index % 4]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </Card>
-              </div>
 
               {/* New Widgets */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
@@ -3045,7 +3003,7 @@ function SubscriptionView({ station, onSubscribe, onConfirmManual, onRefresh }: 
 
             <ul className="space-y-4 mb-8 flex-1">
               {plan.features.map((feature, i) => (
-                <li key={i} className="flex items-center gap-3 text-sm font-bold justify-end">
+                <li key={i} className="flex items-center gap-3 text-sm font-bold justify-end flex-row-reverse">
                   <span>{feature}</span>
                   <CheckCircle className={cn("w-5 h-5", plan.id === 'Enterprise' ? "text-emerald-400" : "text-emerald-500")} />
                 </li>
