@@ -2980,24 +2980,26 @@ function SubscriptionView({ station, onSubscribe, onConfirmManual, onRefresh }: 
 
         <Card title="تفاصيل التحويل المباشر" className="text-right">
           <div className="space-y-6 p-4">
-            <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-amber-800 font-bold text-sm">
-              يرجى تحويل مبلغ ({selectedPlan.price} د.ع) إلى الحساب أدناه ثم الضغط على زر "تأكيد التحويل"
-            </div>
+            {station?.subscription_status !== 'Active' && (
+              <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-amber-800 font-bold text-sm">
+                يرجى تحويل مبلغ ({selectedPlan.price} د.ع) إلى الحساب أدناه ثم الضغط على زر "تأكيد التحويل"
+              </div>
+            )}
 
             <div className="space-y-4">
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                <span className="block text-slate-500 text-xs mb-1">رقم بطاقة الماستر كارد</span>
-                <span className="text-2xl font-black tracking-wider text-slate-800">5123 4567 8901 2345</span>
+                <span className="block text-slate-500 text-xs mb-1">رقم حساب الماستر كارد</span>
+                <span className="text-2xl font-black tracking-wider text-slate-800">917339770914</span>
               </div>
               
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="block text-slate-500 text-xs mb-1">اسم صاحب البطاقة</span>
-                <span className="text-xl font-black text-slate-800">اسمك الكامل هنا</span>
+                <span className="text-xl font-black text-slate-800"> MOHAMMED HAMMOOD </span>
               </div>
 
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="block text-slate-500 text-xs mb-1">نوع البطاقة / المصرف</span>
-                <span className="text-lg font-black text-slate-800">زين كاش / الرافدين / مصرف الطيف</span>
+                <span className="text-lg font-black text-slate-800">مصرف الرافدين </span>
               </div>
             </div>
 
