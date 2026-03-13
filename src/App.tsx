@@ -2995,7 +2995,7 @@ function SubscriptionView({ station, onSubscribe, onConfirmManual, onRefresh }: 
           >
             <div className="mb-6">
               <h3 className="text-xl font-black mb-2">{plan.name}</h3>
-              <div className="flex items-baseline gap-1 justify-end">
+              <div className="flex items-baseline gap-1 justify-center">
                 <span className="text-4xl font-black">{plan.price}</span>
                 <span className="text-sm font-bold opacity-60">د.ع / شهر</span>
               </div>
