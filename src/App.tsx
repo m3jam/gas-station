@@ -236,7 +236,7 @@ export default function App() {
         'Accountant': ['withdrawals', 'expenses', 'loans'],
         'Owner': ['dashboard', 'meter-readings', 'inventory', 'withdrawals', 'expenses', 'loans', 'reports', 'employees', 'settings', 'subscription'],
         'Employee': ['dashboard', 'meter-readings', 'inventory', 'withdrawals', 'expenses', 'loans'],
-        'SuperAdmin': ['stations']
+        'SuperAdmin': ['admin', 'support']
       };
 
       const roleAllowed = allowedTabs[user.role] || [];
