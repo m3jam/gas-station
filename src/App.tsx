@@ -35,7 +35,8 @@ import {
   Copy,
   Edit,
   HandCoins,
-  History
+  History,
+  UserPlus
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -144,6 +145,10 @@ const api = {
   deleteLoan: (id: number) => api.fetch(`/loans/${id}`, { method: 'DELETE' }),
   repayLoan: (id: number, data: any) => api.fetch(`/loans/${id}/repay`, { method: 'POST', body: JSON.stringify(data) }),
   getLoanHistory: (id: number) => api.fetch(`/loans/${id}/history`),
+  getStationAccounts: () => api.fetch('/station/accounts'),
+  saveStationAccount: (data: any) => api.fetch('/station/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  updateStationAccount: (id: number, data: any) => api.fetch(`/station/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteStationAccount: (id: number) => api.fetch(`/station/accounts/${id}`, { method: 'DELETE' }),
 };
 
 // --- Components ---
@@ -221,11 +226,33 @@ export default function App() {
   const [showRepayModal, setShowRepayModal] = useState<any>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<any>(null);
   const [loanHistory, setLoanHistory] = useState<any[]>([]);
+  const [stationAccounts, setStationAccounts] = useState<any[]>([]);
+  const [showAccountModal, setShowAccountModal] = useState<any>(null);
+
+  useEffect(() => {
+    if (user) {
+      const allowedTabs: Record<string, string[]> = {
+        'Writer': ['meter-readings', 'inventory'],
+        'Accountant': ['withdrawals', 'expenses', 'loans'],
+        'Owner': ['dashboard', 'meter-readings', 'inventory', 'withdrawals', 'expenses', 'loans', 'reports', 'employees', 'settings', 'subscription'],
+        'Employee': ['dashboard', 'meter-readings', 'inventory', 'withdrawals', 'expenses', 'loans'],
+        'SuperAdmin': ['stations']
+      };
+
+      const roleAllowed = allowedTabs[user.role] || [];
+      if (roleAllowed.length > 0 && !roleAllowed.includes(activeTab)) {
+        setActiveTab(roleAllowed[0]);
+      }
+    }
+  }, [user, activeTab]);
 
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
     setSelectedProductId(null);
-  }, [activeTab]);
+    if (activeTab === 'settings' && user?.role === 'Owner') {
+      loadStationAccounts();
+    }
+  }, [activeTab, user]);
 
   useEffect(() => {
     const init = async () => {
@@ -402,6 +429,15 @@ export default function App() {
     try {
       const data = await api.fetch('/station-info');
       setStationData(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadStationAccounts = async () => {
+    try {
+      const data = await api.getStationAccounts();
+      setStationAccounts(data);
     } catch (err) {
       console.error(err);
     }
@@ -635,35 +671,43 @@ export default function App() {
         <nav className="space-y-2 flex-1 overflow-y-auto">
           {user.role !== 'SuperAdmin' && (
             <>
-              <SidebarItem 
-                icon={LayoutDashboard} 
-                label="الصفحة الرئيسية " 
-                active={activeTab === 'dashboard'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('dashboard'); setIsSidebarOpen(false); } }} 
-              />
-              <SidebarItem 
-                icon={Gauge} 
-                label="إدخال العدادات" 
-                active={activeTab === 'readings'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('readings'); setIsSidebarOpen(false); } }} 
-              />
-              <SidebarItem 
-                icon={PlusCircle} 
-                label="السحب والتجاري" 
-                active={activeTab === 'withdrawals_commercial'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('withdrawals_commercial'); setIsSidebarOpen(false); } }} 
-              />
-              <SidebarItem 
-                icon={Wallet} 
-                label="المصاريف" 
-                active={activeTab === 'expenses'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('expenses'); setIsSidebarOpen(false); } }} 
-              />
-              {user.role !== 'Employee' && (
+              {(user.role === 'Owner' || user.role === 'Employee') && (
+                <SidebarItem 
+                  icon={LayoutDashboard} 
+                  label="الصفحة الرئيسية " 
+                  active={activeTab === 'dashboard'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('dashboard'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {(user.role === 'Owner' || user.role === 'Employee' || user.role === 'Writer') && (
+                <SidebarItem 
+                  icon={Gauge} 
+                  label="إدخال المبيعات" 
+                  active={activeTab === 'readings'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('readings'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {(user.role === 'Owner' || user.role === 'Employee' || user.role === 'Accountant') && (
+                <SidebarItem 
+                  icon={PlusCircle} 
+                  label="السحب والتجاري" 
+                  active={activeTab === 'withdrawals_commercial'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('withdrawals_commercial'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {(user.role === 'Owner' || user.role === 'Employee' || user.role === 'Accountant') && (
+                <SidebarItem 
+                  icon={Wallet} 
+                  label="المصاريف" 
+                  active={activeTab === 'expenses'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('expenses'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {(user.role === 'Owner' || user.role === 'Accountant') && (
                 <SidebarItem 
                   icon={HandCoins} 
                   label="القروض" 
@@ -672,34 +716,42 @@ export default function App() {
                   onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('loans'); setIsSidebarOpen(false); } }} 
                 />
               )}
-              <SidebarItem 
-                icon={Package} 
-                label="المنتجات والمضخات" 
-                active={activeTab === 'setup'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('setup'); setIsSidebarOpen(false); } }} 
-              />
-              <SidebarItem 
-                icon={TrendingUp} 
-                label="الواردات (الخزين)" 
-                active={activeTab === 'inventory'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('inventory'); setIsSidebarOpen(false); } }} 
-              />
-              <SidebarItem 
-                icon={Settings} 
-                label="الإعدادات" 
-                active={activeTab === 'settings'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('settings'); setIsSidebarOpen(false); } }} 
-              />
-              <SidebarItem 
-                icon={FileText} 
-                label="التقارير" 
-                active={activeTab === 'reports'} 
-                disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
-                onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('reports'); setIsSidebarOpen(false); } }} 
-              />
+              {(user.role === 'Owner' || user.role === 'Employee') && (
+                <SidebarItem 
+                  icon={Package} 
+                  label="المنتجات والمضخات" 
+                  active={activeTab === 'setup'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('setup'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {(user.role === 'Owner' || user.role === 'Employee' || user.role === 'Writer') && (
+                <SidebarItem 
+                  icon={TrendingUp} 
+                  label="الواردات (الخزين)" 
+                  active={activeTab === 'inventory'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('inventory'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {user.role === 'Owner' && (
+                <SidebarItem 
+                  icon={Settings} 
+                  label="الإعدادات" 
+                  active={activeTab === 'settings'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('settings'); setIsSidebarOpen(false); } }} 
+                />
+              )}
+              {(user.role === 'Owner' || user.role === 'Employee') && (
+                <SidebarItem 
+                  icon={FileText} 
+                  label="التقارير" 
+                  active={activeTab === 'reports'} 
+                  disabled={!!subscriptionError && user?.role !== 'SuperAdmin'}
+                  onClick={() => { if (!subscriptionError || user?.role === 'SuperAdmin') { setActiveTab('reports'); setIsSidebarOpen(false); } }} 
+                />
+              )}
             </>
           )}
           {user.role === 'Owner' && (
@@ -1848,6 +1900,90 @@ export default function App() {
                   )}
                 </Card>
               )}
+
+              {user.role === 'Owner' && stationData?.roles_enabled && (
+                <Card title="إدارة الحسابات (الكاتب والمحاسب)">
+                  <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                    <button 
+                      onClick={() => setShowAccountModal({ role: 'Writer' })}
+                      className="flex-1 bg-indigo-50 text-indigo-600 p-4 rounded-2xl font-bold hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 border border-indigo-100"
+                    >
+                      <UserPlus className="w-5 h-5" />
+                      إنشاء حساب كاتب
+                    </button>
+                    <button 
+                      onClick={() => setShowAccountModal({ role: 'Accountant' })}
+                      className="flex-1 bg-emerald-50 text-emerald-600 p-4 rounded-2xl font-bold hover:bg-emerald-100 transition-all flex items-center justify-center gap-2 border border-emerald-100"
+                    >
+                      <UserPlus className="w-5 h-5" />
+                      إنشاء حساب محاسب
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          <th className="pb-4 font-bold text-slate-500 text-sm">الاسم الكامل</th>
+                          <th className="pb-4 font-bold text-slate-500 text-sm">اسم المستخدم</th>
+                          <th className="pb-4 font-bold text-slate-500 text-sm">الدور</th>
+                          <th className="pb-4 font-bold text-slate-500 text-sm">آخر دخول</th>
+                          <th className="pb-4 font-bold text-slate-500 text-sm text-left">الإجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {stationAccounts.map((account) => (
+                          <tr key={account.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="py-4 font-bold text-slate-800">{account.full_name}</td>
+                            <td className="py-4 text-slate-600 font-mono">{account.username}</td>
+                            <td className="py-4">
+                              <span className={cn(
+                                "px-3 py-1 rounded-full text-[10px] font-bold",
+                                account.role === 'Writer' ? "bg-indigo-100 text-indigo-600" : "bg-emerald-100 text-emerald-600"
+                              )}>
+                                {account.role === 'Writer' ? 'كاتب' : 'محاسب'}
+                              </span>
+                            </td>
+                            <td className="py-4 text-slate-400 text-xs">
+                              {account.last_login ? format(new Date(account.last_login), 'yyyy-MM-dd HH:mm', { locale: ar }) : 'لم يدخل بعد'}
+                            </td>
+                            <td className="py-4 text-left">
+                              <div className="flex items-center justify-end gap-2">
+                                <button 
+                                  onClick={() => setShowAccountModal(account)}
+                                  className="p-2 text-slate-400 hover:text-indigo-600 transition-all"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    if (window.confirm('هل أنت متأكد من حذف هذا الحساب؟')) {
+                                      try {
+                                        await api.deleteStationAccount(account.id);
+                                        loadStationAccounts();
+                                      } catch (err) { alert('خطأ في الحذف'); }
+                                    }
+                                  }}
+                                  className="p-2 text-slate-400 hover:text-rose-600 transition-all"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {stationAccounts.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center text-slate-400 text-sm italic">
+                              لا توجد حسابات مضافة حالياً
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              )}
             </motion.div>
           )}
 
@@ -2148,6 +2284,10 @@ export default function App() {
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">كلمة مرور المالك</label>
                         <input name="owner_password" type="password" required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
+                      </div>
+                      <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                        <input name="roles_enabled" type="checkbox" id="new_roles_enabled" className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                        <label htmlFor="new_roles_enabled" className="text-sm font-bold text-slate-700 cursor-pointer">تفعيل نظام الأدوار (كاتب/محاسب)</label>
                       </div>
                       <button className="w-full bg-indigo-600 text-white p-4 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">
                         إنشاء المحطة والمالك
@@ -2544,6 +2684,15 @@ export default function App() {
                       />
                       <span className="text-sm font-bold text-slate-700">إشعارات البيع التجاري</span>
                     </label>
+                    <label className="flex items-center gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100 cursor-pointer hover:border-indigo-200 transition-all col-span-full">
+                      <input 
+                        type="checkbox" 
+                        name="roles_enabled" 
+                        defaultChecked={editingStation.roles_enabled}
+                        className="w-5 h-5 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500" 
+                      />
+                      <span className="text-sm font-bold text-indigo-900">تفعيل نظام الأدوار (كاتب/محاسب)</span>
+                    </label>
                   </div>
                 </div>
 
@@ -2617,6 +2766,84 @@ export default function App() {
           </motion.div>
         </div>
       )}
+
+      {showAccountModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h3 className="text-xl font-bold text-slate-800 flex items-center gap-3">
+                <UserPlus className={cn("w-6 h-6", showAccountModal.role === 'Writer' ? "text-indigo-600" : "text-emerald-600")} />
+                {showAccountModal.id ? 'تعديل حساب' : `إنشاء حساب ${showAccountModal.role === 'Writer' ? 'كاتب' : 'محاسب'}`}
+              </h3>
+              <button onClick={() => setShowAccountModal(null)} className="p-2 hover:bg-white rounded-xl transition-all text-slate-400 hover:text-slate-600">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={async (e: any) => {
+              e.preventDefault();
+              const formData = new FormData(e.target);
+              const data = Object.fromEntries(formData);
+              try {
+                if (showAccountModal.id) {
+                  await api.updateStationAccount(showAccountModal.id, { ...data, role: showAccountModal.role });
+                } else {
+                  await api.saveStationAccount({ ...data, role: showAccountModal.role });
+                }
+                loadStationAccounts();
+                setShowAccountModal(null);
+                alert('تم حفظ الحساب بنجاح');
+              } catch (err: any) {
+                alert(err.message || 'خطأ في الحفظ');
+              }
+            }} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">الاسم الكامل</label>
+                <input 
+                  name="full_name" 
+                  type="text" 
+                  defaultValue={showAccountModal.full_name} 
+                  required 
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" 
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">اسم المستخدم</label>
+                <input 
+                  name="username" 
+                  type="text" 
+                  defaultValue={showAccountModal.username} 
+                  required 
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all font-mono" 
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">
+                  كلمة المرور {showAccountModal.id && '(اتركها فارغة إذا كنت لا تريد تغييرها)'}
+                </label>
+                <input 
+                  name="password" 
+                  type="password" 
+                  required={!showAccountModal.id}
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all" 
+                />
+              </div>
+              <div className="pt-4">
+                <button className={cn(
+                  "w-full text-white p-4 rounded-2xl font-bold transition-all shadow-lg",
+                  showAccountModal.role === 'Writer' ? "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100" : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100"
+                )}>
+                  حفظ الحساب
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
       {showRepayModal && (
         <div className="fixed inset-0 bg-slate-900/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <motion.div 
@@ -2728,7 +2955,7 @@ function SubscriptionView({ station, onSubscribe, onConfirmManual, onRefresh }: 
       price: '25,000',
       features: [
         'إدارة المنتجات والمضخات',
-        'إدخال العدادات اليومية',
+        'إدخال المبيعات اليومية',
         'إدارة المخزون والواردات',
         'تقارير المبيعات والأرباح',
         'دعم فني متكامل',

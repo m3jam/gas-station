@@ -124,9 +124,11 @@ const initDb = async () => {
   try { await db.query("ALTER TABLE stations ADD COLUMN notifications_enabled INTEGER DEFAULT 1"); } catch(e) {}
   try { await db.query("ALTER TABLE stations ADD COLUMN notify_expenses INTEGER DEFAULT 1"); } catch(e) {}
   try { await db.query("ALTER TABLE stations ADD COLUMN notify_withdrawals INTEGER DEFAULT 1"); } catch(e) {}
+  try { await db.query("ALTER TABLE stations ADD COLUMN roles_enabled INTEGER DEFAULT 0"); } catch(e) {}
   try { await db.query("ALTER TABLE withdrawals ADD COLUMN amount DOUBLE PRECISION DEFAULT 0"); } catch(e) {}
   try { await db.query("ALTER TABLE withdrawals ALTER COLUMN quantity DROP NOT NULL"); } catch(e) {}
   try { await db.query("ALTER TABLE stations ADD COLUMN notify_commercial_sales INTEGER DEFAULT 1"); } catch(e) {}
+  try { await db.query("ALTER TABLE users ADD COLUMN last_login TIMESTAMP"); } catch(e) {}
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -365,6 +367,9 @@ app.post("/api/auth/login", async (req, res) => {
   const user = result.rows[0];
   
   if (user && bcrypt.compareSync(password, user.password)) {
+    // Update last login
+    await db.query("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1", [user.id]);
+
     // Defensive check for station_id
     const stationId = user.station_id ? Number(user.station_id) : null;
     
@@ -416,7 +421,7 @@ app.post("/api/request-manual-activation", authenticateToken, async (req: any, r
 
 app.post("/api/stations", authenticateToken, async (req: any, res) => {
   if (req.user.role !== 'SuperAdmin') return res.status(403).json({ error: "Access denied" });
-  const { name, address, phone, subscription_plan, months, owner_username, owner_password, slug, logo_url } = req.body;
+  const { name, address, phone, subscription_plan, months, owner_username, owner_password, slug, logo_url, roles_enabled } = req.body;
   
   if (!name || !owner_username || !owner_password) {
     return res.status(400).json({ error: "Missing required fields" });
@@ -436,8 +441,8 @@ app.post("/api/stations", authenticateToken, async (req: any, res) => {
     }
 
     const stationRes = await client.query(
-      "INSERT INTO stations (name, address, phone, subscription_plan, subscription_expires_at, is_active, subscription_status, owner_username, owner_password_plain, slug, logo_url) VALUES ($1, $2, $3, $4, $5, 0, 'Inactive', $6, $7, $8, $9) RETURNING id",
-      [name, address, phone, subscription_plan || 'Basic', expiryDate, owner_username, owner_password, slug || null, logo_url || null]
+      "INSERT INTO stations (name, address, phone, subscription_plan, subscription_expires_at, is_active, subscription_status, owner_username, owner_password_plain, slug, logo_url, roles_enabled) VALUES ($1, $2, $3, $4, $5, 0, 'Inactive', $6, $7, $8, $9, $10) RETURNING id",
+      [name, address, phone, subscription_plan || 'Basic', expiryDate, owner_username, owner_password, slug || null, logo_url || null, roles_enabled ? 1 : 0]
     );
     
     const stationId = stationRes.rows[0].id;
@@ -554,14 +559,80 @@ app.put("/api/stations/:id", authenticateToken, async (req: any, res) => {
     }
 
     await db.query(
-      "UPDATE stations SET name = $1, address = $2, phone = $3, slug = $4, logo_url = $5 WHERE id = $6",
-      [name, address, phone, slug, logo_url, stationId]
+      "UPDATE stations SET name = $1, address = $2, phone = $3, slug = $4, logo_url = $5, roles_enabled = $6 WHERE id = $7",
+      [name, address, phone, slug, logo_url, req.body.roles_enabled ? 1 : 0, stationId]
     );
     res.json({ success: true });
   } catch (err: any) {
     console.error("Error updating station:", err);
     res.status(400).json({ error: err.message || "Failed to update station" });
   }
+});
+
+// --- Station Account Management (for Owners) ---
+app.get("/api/station/accounts", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'Owner') return res.status(403).json({ error: "Access denied" });
+  const result = await db.query(
+    "SELECT id, username, role, full_name, last_login FROM users WHERE station_id = $1 AND role IN ('Writer', 'Accountant')",
+    [req.user.station_id]
+  );
+  res.json(result.rows);
+});
+
+app.post("/api/station/accounts", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'Owner') return res.status(403).json({ error: "Access denied" });
+  const { username, password, role, full_name } = req.body;
+  
+  // Check if roles are enabled for this station
+  const stationRes = await db.query("SELECT roles_enabled FROM stations WHERE id = $1", [req.user.station_id]);
+  if (!stationRes.rows[0]?.roles_enabled) {
+    return res.status(403).json({ error: "نظام الأدوار غير مفعل لهذه المحطة" });
+  }
+
+  const hashedPassword = bcrypt.hashSync(password, 10);
+  try {
+    await db.query(
+      "INSERT INTO users (station_id, username, password, role, full_name) VALUES ($1, $2, $3, $4, $5)",
+      [req.user.station_id, username, hashedPassword, role, full_name]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "اسم المستخدم موجود مسبقاً" });
+  }
+});
+
+app.put("/api/station/accounts/:id", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'Owner') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  const { username, password, role, full_name } = req.body;
+
+  try {
+    if (password) {
+      const hashedPassword = bcrypt.hashSync(password, 10);
+      await db.query(
+        "UPDATE users SET username = $1, password = $2, role = $3, full_name = $4 WHERE id = $5 AND station_id = $6 AND role IN ('Writer', 'Accountant')",
+        [username, hashedPassword, role, full_name, id, req.user.station_id]
+      );
+    } else {
+      await db.query(
+        "UPDATE users SET username = $1, role = $2, full_name = $3 WHERE id = $4 AND station_id = $5 AND role IN ('Writer', 'Accountant')",
+        [username, role, full_name, id, req.user.station_id]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "خطأ في التحديث" });
+  }
+});
+
+app.delete("/api/station/accounts/:id", authenticateToken, async (req: any, res) => {
+  if (req.user.role !== 'Owner') return res.status(403).json({ error: "Access denied" });
+  const { id } = req.params;
+  await db.query(
+    "DELETE FROM users WHERE id = $1 AND station_id = $2 AND role IN ('Writer', 'Accountant')",
+    [id, req.user.station_id]
+  );
+  res.json({ success: true });
 });
 
 // Public route to get station info by slug
