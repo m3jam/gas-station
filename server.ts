@@ -472,11 +472,16 @@ app.delete("/api/stations/:id", authenticateToken, async (req: any, res) => {
   try {
     await client.query('BEGIN');
     // Delete all related data in order to satisfy foreign key constraints
+    await client.query("DELETE FROM loan_repayments WHERE loan_id IN (SELECT id FROM loans WHERE station_id = $1)", [stationId]);
+    await client.query("DELETE FROM loans WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM meter_readings WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM inventory_transactions WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM pumps WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM products WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM expenses WHERE station_id = $1", [stationId]);
+    await client.query("DELETE FROM withdrawals WHERE station_id = $1", [stationId]);
+    await client.query("DELETE FROM commercial_sales WHERE station_id = $1", [stationId]);
+    await client.query("DELETE FROM push_subscriptions WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM users WHERE station_id = $1", [stationId]);
     await client.query("DELETE FROM stations WHERE id = $1", [stationId]);
     await client.query('COMMIT');
@@ -831,16 +836,18 @@ app.get("/api/dashboard/stats", authenticateToken, checkSubscription, async (req
   const productStatsRes = await db.query(`
     SELECT 
       pr.name, 
-      SUM(m.liters_sold) as total_liters, 
-      SUM(m.total_amount) as total_sales, 
-      SUM(m.profit) as total_profit,
+      pr.buy_price,
+      pr.sell_price,
+      COALESCE(SUM(m.liters_sold), 0) as total_liters, 
+      COALESCE(SUM(m.total_amount), 0) as total_sales, 
+      COALESCE(SUM(m.profit), 0) as total_profit,
       pr.stock_quantity,
       pr.low_stock_threshold
     FROM products pr
     LEFT JOIN pumps p ON p.product_id = pr.id
     LEFT JOIN meter_readings m ON m.pump_id = p.id AND m.reading_date = $1
     WHERE pr.station_id = $2
-    GROUP BY pr.id, pr.name, pr.stock_quantity, pr.low_stock_threshold
+    GROUP BY pr.id, pr.name, pr.buy_price, pr.sell_price, pr.stock_quantity, pr.low_stock_threshold
   `, [date, req.user.station_id]);
 
   const totalExpensesRes = await db.query("SELECT SUM(amount) as total FROM expenses WHERE station_id = $1 AND expense_date = $2",
@@ -890,6 +897,8 @@ app.get("/api/reports", authenticateToken, checkSubscription, async (req: any, r
   const productStatsRes = await db.query(`
     SELECT 
       pr.name, 
+      pr.buy_price,
+      pr.sell_price,
       COALESCE(SUM(m.liters_sold), 0) as total_liters, 
       COALESCE(SUM(m.total_amount), 0) as total_sales, 
       COALESCE(SUM(m.profit), 0) as total_profit
@@ -897,7 +906,7 @@ app.get("/api/reports", authenticateToken, checkSubscription, async (req: any, r
     LEFT JOIN pumps p ON p.product_id = pr.id
     LEFT JOIN meter_readings m ON m.pump_id = p.id ${dateFilter}
     WHERE pr.station_id = $${stationIdParamIndex}
-    GROUP BY pr.id, pr.name
+    GROUP BY pr.id, pr.name, pr.buy_price, pr.sell_price
   `, queryParams);
 
   let expenseParams: any[] = [req.user.station_id];

@@ -848,28 +848,40 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard 
                   title="إجمالي المبيعات" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => {
-                    const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
-                      ? (stats.withdrawals?.reduce((wAcc: any, w: any) => wAcc + (w.quantity || 0), 0) || 0)
-                      : 0;
-                    const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
-                    const effectiveSales = effectiveLiters * (p.sell_price || 0);
-                    return acc + effectiveSales;
-                  }, 0)).toLocaleString()} د.ع`}
+                  value={`${(() => {
+                    if (!stats?.products) return "0";
+                    let remainingWithdrawal = stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity || 0), 0) || 0;
+                    const total = stats.products.reduce((acc: any, p: any) => {
+                      let liters = parseFloat(p.total_liters || 0);
+                      if (remainingWithdrawal > 0 && (p.name.includes('كاز') || p.name.includes('ديزل'))) {
+                        const deduction = Math.min(liters, remainingWithdrawal);
+                        liters -= deduction;
+                        remainingWithdrawal -= deduction;
+                      }
+                      return acc + (liters * (p.sell_price || 0));
+                    }, 0);
+                    return total.toLocaleString();
+                  })()} د.ع`}
                   icon={TrendingUp}
                   color="bg-indigo-500"
                 />
                 <StatCard 
                   title="صافي الربح" 
-                  value={`${(stats.products.reduce((acc: any, p: any) => {
-                    const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
-                      ? (stats.withdrawals?.reduce((wAcc: any, w: any) => wAcc + (w.quantity || 0), 0) || 0)
-                      : 0;
-                    const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
-                    const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
-                    const effectiveProfit = effectiveLiters * profitPerLiter;
-                    return acc + effectiveProfit;
-                  }, 0) - stats.totalExpenses).toLocaleString()} د.ع`}
+                  value={`${(() => {
+                    if (!stats?.products) return "0";
+                    let remainingWithdrawal = stats.withdrawals?.reduce((acc: any, w: any) => acc + (w.quantity || 0), 0) || 0;
+                    const totalProfit = stats.products.reduce((acc: any, p: any) => {
+                      let liters = parseFloat(p.total_liters || 0);
+                      if (remainingWithdrawal > 0 && (p.name.includes('كاز') || p.name.includes('ديزل'))) {
+                        const deduction = Math.min(liters, remainingWithdrawal);
+                        liters -= deduction;
+                        remainingWithdrawal -= deduction;
+                      }
+                      const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
+                      return acc + (liters * profitPerLiter);
+                    }, 0);
+                    return (totalProfit - (stats.totalExpenses || 0)).toLocaleString();
+                  })()} د.ع`}
                   icon={TrendingUp}
                   color="bg-emerald-500"
                 />
@@ -1912,28 +1924,40 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard 
                       title="إجمالي المبيعات" 
-                      value={`${(reportsData.products.reduce((acc: any, p: any) => {
-                        const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
-                          ? (reportsData.totalWithdrawalsLiters || 0)
-                          : 0;
-                        const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
-                        const effectiveSales = effectiveLiters * (p.sell_price || 0);
-                        return acc + effectiveSales;
-                      }, 0)).toLocaleString()} د.ع`}
+                      value={`${(() => {
+                        if (!reportsData?.products) return "0";
+                        let remainingWithdrawal = reportsData.totalWithdrawalsLiters || 0;
+                        const total = reportsData.products.reduce((acc: any, p: any) => {
+                          let liters = parseFloat(p.total_liters || 0);
+                          if (remainingWithdrawal > 0 && (p.name.includes('كاز') || p.name.includes('ديزل'))) {
+                            const deduction = Math.min(liters, remainingWithdrawal);
+                            liters -= deduction;
+                            remainingWithdrawal -= deduction;
+                          }
+                          return acc + (liters * (p.sell_price || 0));
+                        }, 0);
+                        return total.toLocaleString();
+                      })()} د.ع`}
                       icon={TrendingUp}
                       color="bg-indigo-500"
                     />
                     <StatCard 
                       title="إجمالي الربح" 
-                      value={`${(reportsData.products.reduce((acc: any, p: any) => {
-                        const withdrawalQty = p.name.includes('كاز') || p.name.includes('ديزل') 
-                          ? (reportsData.totalWithdrawalsLiters || 0)
-                          : 0;
-                        const effectiveLiters = Math.max(0, (p.total_liters || 0) - withdrawalQty);
-                        const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
-                        const effectiveProfit = effectiveLiters * profitPerLiter;
-                        return acc + effectiveProfit;
-                      }, 0)).toLocaleString()} د.ع`}
+                      value={`${(() => {
+                        if (!reportsData?.products) return "0";
+                        let remainingWithdrawal = reportsData.totalWithdrawalsLiters || 0;
+                        const totalProfit = reportsData.products.reduce((acc: any, p: any) => {
+                          let liters = parseFloat(p.total_liters || 0);
+                          if (remainingWithdrawal > 0 && (p.name.includes('كاز') || p.name.includes('ديزل'))) {
+                            const deduction = Math.min(liters, remainingWithdrawal);
+                            liters -= deduction;
+                            remainingWithdrawal -= deduction;
+                          }
+                          const profitPerLiter = (p.sell_price || 0) - (p.buy_price || 0);
+                          return acc + (liters * profitPerLiter);
+                        }, 0);
+                        return totalProfit.toLocaleString();
+                      })()} د.ع`}
                       icon={TrendingUp}
                       color="bg-emerald-500"
                     />
